@@ -1,0 +1,7 @@
+name = Cobook
+description = Copenhagen Library Booking Module
+package = Cobook
+core = 7.x
+files[] = cobook.module
+files[] = cobook.install
+configure = admin/config/content/cobook/settings

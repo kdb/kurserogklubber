@@ -1,0 +1,188 @@
+<?php
+
+/**
+ * Implements hook_install
+ */
+ 
+function cobook_install() {
+ 
+}
+
+
+/**
+ * Implements hook_uninstall
+ */
+
+function cobook_uninstall() { 
+   
+}
+
+/**
+ * Implements hook_schema
+ */
+
+function cobook_schema() {
+  $schema['cobook_attendance'] = array(
+    'description' => t('Stores information about each attendee and would-be attendee.'),
+    'fields' => array(
+      'cid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => "Auto-incremented primary key",
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('The {user}.uid of the attending user'),
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('The {node}.nid of the event being attended to'),
+      ),
+      'delta' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('The delta value of the date of the event'),
+      ),
+      'attending' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('Waiting if 0, attending if 1, cancelled if 2'),
+      ),
+      'waiting' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('Not waiting if 0, waiting-as-number if not 0'),
+      ),
+      'name' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('Name of the attendee'),
+      ),
+      'mobile' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('Mobile number of the attendee'),
+      ),
+      'phone' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('Fixed-line number of the attendee'),
+      ),
+      'email' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('E-mail address of the attendee'),
+      ),
+    ),
+    'primary key' => array('cid'),
+    'indexes' => array(
+      'list' => array('uid', 'nid', 'name'),
+    ),
+  );
+
+  $schema['cobook_status'] = array(
+    'description' => t('Stores status information about vacancy.'),
+    'fields' => array(
+      'nid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => ('Primary key, the {node}.nid of the event being attended to'),
+      ),
+      'delta' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('Primary key, the delta value of the date of the event'),
+      ),
+      'status' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 'Ledige pladser',
+        'description' => t('Vacancy status for each event'),
+      ),
+      'reminders' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('Reminders have been sent if reminders > 0'),
+      ),
+      'actual_attendees' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('The number of attendees, who did participate'),
+      ),
+    ),
+    'primary key' => array('nid', 'delta'),
+    
+  );
+
+  $schema['cobook_user'] = array(
+    'description' => t('Stores filter information per user.'),
+    'fields' => array(
+      'uid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+        'description' => t('Primary key, the {user}.uid of the attending user'),
+      ),
+      'usercol' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'description' => t('Sted or type'),
+      ),
+      'userval' => array(
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'description' => t('Filter value of sted or type'),
+      ),
+    ),
+    'primary key' => array('uid'),
+    
+  );
+
+  return $schema;
+}
+
+/**
+ * When the module is uninstalled on the admin pages (from the tab "uninstall"), the database table will be deleted
+ */
+
+/**
+ * Example function for update of schema
+ * See Pro Drupal 7 Development, page 108ff
+ * function cobook_update_7000() {
+ *   db_rename_table('cobook_attendance', 'cobook_entries');
+ * }
+ */
