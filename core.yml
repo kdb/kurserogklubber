@@ -1,0 +1,5 @@
+patches:
+  -
+    patch: 'https://www.drupal.org/files/issues/SA-CORE-2014-005-D7.patch'
+    home: 'https://www.drupal.org/SA-CORE-2014-005'
+    reason: 'Fix DRUPAL-SA-CORE-2014-005'
