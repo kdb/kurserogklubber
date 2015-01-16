@@ -160,6 +160,11 @@ function cobook_menu() {
  */
  
 function attend_stat() {
+  $user_status_total = 0; // Til optælling af samlet antal tilmeldte på en institutions kurser
+  $user_status_grand_total = 0; // Til optæling af det samlede antal tilmeldte på alle inst.
+  $course_count = 0; // Til optælling af samlet antal kurser på en institution
+  $course_count_grand_total = 0; // Til optælling af det samlede antal kurser på alle inst.
+
   $result = db_query('SELECT DISTINCT field_location_value FROM {field_revision_field_location} ORDER BY field_location_value');
   $output = '<br><h1>Statistik for Digital Københavner - antal tilmeldte pr. kursus, inklusive venteliste</h1><br>';
   foreach ($result as $item) {
@@ -168,6 +173,7 @@ function attend_stat() {
     // Find herefter undersøgelserne, der hører hertil - Digital københavner - efter dato
     $result2 = db_query('SELECT entity_id, delta FROM {field_revision_field_location} WHERE field_location_value = :flv', array(':flv' => $item->field_location_value));
     $loc_writ = FALSE;
+
     foreach($result2 as $item2) {
       $type = db_query('SELECT field_type_value FROM {field_data_field_type}  WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta))->fetchField();
       if ($type == 'Digital Københavner') {
@@ -181,16 +187,24 @@ function attend_stat() {
         foreach ($result3 as $item3) {
           $timelisting = create_timestring($item3->field_time_value, $item3->field_time_value2, TRUE);
         }
-        // Find antal tilmeldte
+        // Find antal tilmeldte og tæl kurser
         $user_status = 0;
-        $user_status = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE (attending = 1 OR waiting > 0) AND nid = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta))->fetchField();
-        $output .= '<p>' . $user_status . '&nbsp;&nbsp;&nbsp;' . $title . ', ' . $timelisting . '</p>';
+		$user_status = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE (attending = 1 OR waiting > 0) AND nid = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta))->fetchField();
+        $user_status_total = $user_status_total + $user_status;
+		$output .= '<p>' . $user_status . '&nbsp;&nbsp;&nbsp;' . $title . ', ' . $timelisting . '</p>';
+		$course_count = $course_count + 1;
       }  
     }
-    
+	$output .= '<h3>Opsummering</h3><p>' . $user_status_total . ' tilmeldte fordelt på ' . $course_count . ' kurser.</p><br />';
+
+	$user_status_grand_total = $user_status_grand_total + $user_status_total;
+	$course_count_grand_total = $course_count_grand_total + $course_count;
+	$user_status_total = 0;
+	$course_count = 0;
   }
+	$output .= '<h2>Opsummering, alle institutioner</h2><p>Fra 1. januar til dd har der været udbudt ' . $course_count_grand_total . ' kurser med i alt ' . $user_status_grand_total . ' tilmeldte.</p><br />';
   return $output;
-  
+
 }
  
 /**
