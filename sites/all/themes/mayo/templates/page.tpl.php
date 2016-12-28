@@ -69,10 +69,6 @@
 
 <?php
   $page_wrapper_style = '';
-  $page_width = theme_get_setting('page_width');
-  if (empty($page_width)) $page_width = '90%';
-  if (arg(0) == "admin") $page_width = '100%'; // admin page
-  $page_wrapper_style = 'width: ' . $page_width . ';';
   $base_vmargin = theme_get_setting('base_vmargin');
   if (arg(0) == "admin") $base_vmargin = '0px'; // admin page
   if (empty($base_vmargin)) $base_vmargin = '0px';
@@ -88,12 +84,10 @@
     $page_style = 'padding: ' . $page_margin . ';';
   }
   else {
-    $main_style = 'padding: 0px ' . $page_margin . ';';
+    $main_style = 'padding: 0px ' . $page_margin . '; box-sizing: border-box;';
   }
 
   $header_style = '';
-  $header_height = theme_get_setting('header_height');
-  if (!empty($header_height)) $header_style .= 'height: ' . $header_height . ';';
   $header_bg_file = check_url(theme_get_setting('header_bg_file'));
   if ($header_bg_file) {
     $header_style .= 'filter:;background: url(' . $header_bg_file . ') repeat ';
@@ -111,54 +105,12 @@
   $header_watermark_style = '';
   $header_watermark = theme_get_setting('header_watermark');
   if($header_watermark) {
-    $header_watermark_style = 'background-image: url(/' . drupal_get_path('theme', 'mayo') . '/images/pat-' . $header_watermark . '.png);';
+    $header_watermark_style = 'background-image: url(' . file_create_url(drupal_get_path('theme', 'mayo') . '/images/pat-' . $header_watermark . '.png') . ');';
   }
 
-  $logo_style = '';
-  $logo_left_margin = theme_get_setting('logo_left_margin');
-  if (empty($logo_left_margin)) $logo_left_margin = '0px';
-  $logo_top_margin = theme_get_setting('logo_top_margin');
-  if (empty($logo_top_margin)) $logo_top_margin = '0px';
-  $logo_style = 'padding-left: ' . $logo_left_margin . '; padding-top: ' . $logo_top_margin . ';';
-
-  $sitename_style = '';
-  $sitename_left_margin = theme_get_setting('sitename_left_margin');
-  if (empty($sitename_left_margin)) $sitename_left_margin = '0px';
-  $sitename_top_margin = theme_get_setting('sitename_top_margin');
-  if (empty($sitename_top_margin)) $sitename_top_margin = '0px';
-  $sitename_style = 'padding-left: ' . $sitename_left_margin . '; padding-top: ' . $sitename_top_margin . ';';
-
-  $searchbox_style = '';
-  $searchbox_right_margin = theme_get_setting('searchbox_right_margin');
-  if (empty($searchbox_right_margin)) $searchbox_right_margin = '0px';
-  $searchbox_top_margin = theme_get_setting('searchbox_top_margin');
-  if (empty($searchbox_top_margin)) $searchbox_top_margin = '0px';
-  $searchbox_style = 'padding-right: ' . $searchbox_right_margin . '; padding-top: ' . $searchbox_top_margin . ';';
-
-  $fontsizer_top_margin = (intval($searchbox_top_margin) + 3) . 'px';
-  $fontsizer_style = 'margin-top: ' . $fontsizer_top_margin . ';';
-
-  $sb_layout_style = theme_get_setting('sidebar_layout_style');
-  $sb_first_width = theme_get_setting('sidebar_first_width');
-  if (empty($sb_first_width)) $sb_first_width = '25%';
-  $sb_first_style = 'width: ' . $sb_first_width . ';';
-  $sb_second_width = theme_get_setting('sidebar_second_width');
-  if (empty($sb_second_width)) $sb_second_width = '25%';
-  $sb_second_style = 'width: ' . $sb_second_width . ';';
-
-  $content_width = 100;
-  if ($page['sidebar_first']) {
-    $content_width -= intval(preg_replace('/%/', '', $sb_first_width));
-  }
-  if ($page['sidebar_second']) {
-    $content_width -= intval(preg_replace('/%/', '', $sb_second_width));
-  }
-  $content_style = 'width: ' . $content_width . '%;';
-
-  $margins = mayo_get_margins($page['content'], $page['sidebar_first'], $page['sidebar_second']);
-  $content_section_style = $margins['content'];
-  $sb_first_section_style = $margins['sb_first'];
-  $sb_second_section_style = $margins['sb_second'];
+  $menubar_style = '';
+  $menubar_bg_value = theme_get_setting('menubar_bg_value');
+  if (theme_get_setting('menubar_background') == 1) $menubar_style = ' style=" background-color: ' . $menubar_bg_value . ';"';
 
   if (theme_get_setting('header_fontsizer')) {
     drupal_add_js(drupal_get_path('theme', 'mayo') . '/js/mayo-fontsize.js');
@@ -170,8 +122,15 @@
       $page['bottom_column_first'] ||
       $page['bottom_column_second'] ||
       $page['bottom_column_third'] ||
-      $page['bottom_column_fourth']) {
-    drupal_add_js(drupal_get_path('theme', 'mayo') . '/js/mayo-columns.js');
+      $page['bottom_column_fourth'] ||
+      $page['footer_column_first'] ||
+      $page['footer_column_second'] ||
+      $page['footer_column_third'] ||
+      $page['footer_column_fourth']) {
+    drupal_add_js(drupal_get_path('theme', 'mayo') . '/js/mayo-columns.js',
+      array('type'=>'file',
+        'scope'=>'footer',
+      ));
   }
 ?>
 
@@ -183,7 +142,7 @@
     <div class="section clearfix">
 
       <?php if ($logo): ?>
-        <div id="logo" style="<?php echo $logo_style; ?>">
+        <div id="logo">
         <a href="<?php print $front_page; ?>" title="<?php print t('Home'); ?>" rel="home">
           <img src="<?php print $logo; ?>" alt="<?php print t('Home'); ?>" />
         </a>
@@ -191,7 +150,7 @@
       <?php endif; ?>
 
       <?php if ($site_name || $site_slogan): ?>
-        <div id="name-and-slogan" style="<?php echo $sitename_style; ?>">
+        <div id="name-and-slogan">
           <?php if ($site_name): ?>
             <?php if ($title): ?>
               <div id="site-name"><strong>
@@ -211,13 +170,13 @@
       <?php endif; ?>
 
       <?php if ((theme_get_setting('header_searchbox')) && function_exists('search_box')) { ?>
-        <div id="header-searchbox" style="<?php echo $searchbox_style; ?>">
+        <div id="header-searchbox">
       <?php  $output_form = drupal_get_form('search_block_form'); print render($output_form); ?>
         </div>
       <?php } ?>
 
       <?php if (theme_get_setting('header_fontsizer')) { ?>
-        <div id="header-fontsizer" style="<?php echo $fontsizer_style; ?>">
+        <div id="header-fontsizer">
         <a href="#" class="decreaseFont" title="Decrease text size"></a>
         <a href="#" class="resetFont"    title="Restore default text size"></a>
         <a href="#" class="increaseFont" title="Increase text size"></a>
@@ -243,7 +202,7 @@
 
     <!-- for nice_menus, superfish -->
     <?php if ($page['menubar']) { ?>
-    <div id="menubar" class="menubar clearfix">
+    <div id="menubar" class="menubar clearfix"<?php if(!empty($menubar_style)) echo $menubar_style; ?>>
       <?php print render($page['menubar']); ?>
     </div>
     <?php } ?>
@@ -285,21 +244,8 @@
       <div class="clearfix cfie"></div>
 
 
-      <!-- sidebars (left) -->
-      <?php if (($page['sidebar_first']) && ($sb_layout_style != 3)){ ?>
-        <div id="sidebar-first" class="column sidebar" style="<?php echo $sb_first_style; ?>"><div class="section" style="<?php echo $sb_first_section_style; ?>">
-          <?php print render($page['sidebar_first']); ?>
-        </div></div> <!-- /.section, /#sidebar-first -->
-      <?php } ?>
-      <?php if (($page['sidebar_second']) && ($sb_layout_style == 2)) { ?>
-        <div id="sidebar-second" class="column sidebar" style="<?php echo $sb_second_style; ?>"><div class="section" style="<?php echo $sb_second_section_style; ?>">
-          <?php print render($page['sidebar_second']); ?>
-        </div></div> <!-- /.section, /#sidebar-second -->
-      <?php } ?>
-
-
       <!-- main content -->
-      <div id="content" class="column" style="<?php echo $content_style; ?>"><div class="section" style="<?php echo $content_section_style; ?>">
+      <div id="content" class="column"><div class="section">
 
         <?php if ($page['highlighted']) { ?>
           <div id="highlighted"><?php print render($page['highlighted']); ?></div>
@@ -313,7 +259,7 @@
         <?php print render($title_prefix); ?>
         <?php if ($title): ?><h1 class="title" id="page-title"><?php print $title; ?></h1><?php endif; ?>
         <?php print render($title_suffix); ?>
-        <?php if ($tabs): ?><div class="tabs"><?php print render($tabs); ?></div><?php endif; ?>
+        <?php if ($tabs): ?><div class="tabs clearfix"><?php print render($tabs); ?></div><?php endif; ?>
         <?php print render($page['help']); ?>
         <?php if ($action_links): ?><ul class="action-links"><?php print render($action_links); ?></ul><?php endif; ?>
         <?php print render($page['content']); ?>
@@ -321,15 +267,16 @@
 
       </div></div> <!-- /.section, /#content -->
 
-
-      <!-- sidebars (right) -->
-      <?php if (($page['sidebar_first']) && ($sb_layout_style == 3)) { ?>
-        <div id="sidebar-first-r" class="column sidebar" style="<?php echo $sb_first_style; ?>"><div class="section" style="<?php echo $sb_first_section_style; ?>">
+      <!-- sidebar (first) -->
+      <?php if ($page['sidebar_first']){ ?>
+        <div id="sidebar-first" class="column sidebar"><div class="section">
           <?php print render($page['sidebar_first']); ?>
         </div></div> <!-- /.section, /#sidebar-first -->
       <?php } ?>
-      <?php if (($page['sidebar_second']) && ($sb_layout_style != 2)) { ?>
-        <div id="sidebar-second-r" class="column sidebar" style="<?php echo $sb_second_style; ?>"><div class="section" style="<?php echo $sb_second_section_style; ?>">
+
+      <!-- sidebar (second) -->
+            <?php if ($page['sidebar_second']) { ?>
+        <div id="sidebar-second" class="column sidebar"><div class="section">
           <?php print render($page['sidebar_second']); ?>
         </div></div> <!-- /.section, /#sidebar-second -->
       <?php } ?>
@@ -387,7 +334,5 @@
       <?php } ?>
 
     </div> <!-- /#footer-wrapper -->
-
-
   </div> <!-- /#page -->
 </div> <!-- /#page-wrapper -->
