@@ -1,0 +1,2651 @@
+<?php
+
+/**
+ * @file 
+ * Business logic of booking system
+ * 
+ * This module is taking care of the booking system's registration of attendees 
+ * and people waiting on a list for place on courses and other events.
+ */
+
+/**
+ * Implementation of hook_menu()
+ * Mapping of URLs to functions
+ */
+function cobook_menu() {
+  $items['act_attendees'] = array(
+    'page callback' => 'act_attendees',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['attendee_list'] = array(
+    'page callback' => 'attendee_list',
+    'access callback' => 'user_access',
+    'access arguments' => array('auth_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['cancel'] = array(
+    'page callback' => 'attendance_cancel',
+    'access callback' => 'user_access',
+    'access arguments' => array('auth_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['cancellation'] = array(
+    'page callback' => 'cancellation',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['cancelled'] = array(
+    'page callback' => 'attendance_cancelled',
+    'access callback' => 'user_access',
+    'access arguments' => array('auth_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['copy'] = array(
+    'page callback' => 'copy_node',
+    'access callback' => 'user_access',
+    'access arguments' => array('admin_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['display_node'] = array(
+    'page callback' => 'display_node',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['download'] = array(
+    'page callback' => 'download_data',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['edit_details'] = array(
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('edit_details_form'),
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['enrol'] = array(
+    'page callback' => '_update_attendance',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['filter'] = array(
+    'page callback' => '_do_filter',
+    'access callback' => 'user_access',
+    'access arguments' => array('admin_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['filter_db'] = array(
+    'page callback' => '_db_filter',
+    'access callback' => 'user_access',
+    'access arguments' => array('admin_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['help'] = array(
+    'page callback' => 'manage_help',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['manage'] = array(
+    'page callback' => 'manage_details',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['msg_batch'] = array(
+    'title' => t('Send besked til alle tilmeldte, der har oplyst mobilnummer eller mailadresse'),
+    'page callback' => 'send_batch_of_msgs',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['older_courses'] = array(
+    'page callback' => 'older_courses',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['page_1'] = array(
+    'page callback' => 'front_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['reminders'] = array(
+    'page callback' => 'update_reminders',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['undo'] = array(
+    'page callback' => 'undo_cancellation',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+  $items['book_bibliotekar'] = array(
+    'page callback' => 'book_librarian',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['klub'] = array(
+    'page callback' => 'club',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['studiekreds'] = array(
+    'page callback' => 'study_circle',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['orientering'] = array(
+    'page callback' => 'orientation',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['digitalstat'] = array(
+    'page callback' => 'attend_stat',
+    'access callback' => 'user_access',
+    'access arguments' => array('staff_access'),
+    'type' => MENU_CALLBACK
+  );
+
+  return $items;
+
+}
+
+/**
+ * Attendee statistics
+ */
+ 
+function attend_stat() {
+  $user_status_total = 0; // Til optælling af samlet antal tilmeldte på en institutions kurser
+  $user_status_grand_total = 0; // Til optæling af det samlede antal tilmeldte på alle inst.
+  $course_count = 0; // Til optælling af samlet antal kurser på en institution
+  $course_count_grand_total = 0; // Til optælling af det samlede antal kurser på alle inst.
+
+  $result = db_query('SELECT DISTINCT field_location_value FROM {field_revision_field_location} ORDER BY field_location_value');
+  $output = '<br><h1>Statistik for Digital Københavner - antal tilmeldte pr. kursus, inklusive venteliste</h1><br>';
+  foreach ($result as $item) {
+    
+    
+    // Find herefter undersøgelserne, der hører hertil - Digital københavner - efter dato
+    $result2 = db_query('SELECT entity_id, delta FROM {field_revision_field_location} WHERE field_location_value = :flv', array(':flv' => $item->field_location_value));
+    $loc_writ = FALSE;
+
+    foreach($result2 as $item2) {
+      $type = db_query('SELECT field_type_value FROM {field_data_field_type}  WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta))->fetchField();
+      if ($type == 'Digital Københavner') {
+        if ($loc_writ == FALSE) {
+          // Skriv overskrift for institution
+          $output .= '<h2>' . $item->field_location_value . '</h2>';  
+          $loc_writ = TRUE;
+        }
+        $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' =>$item2->entity_id))->fetchField();
+        $result3 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta));
+        foreach ($result3 as $item3) {
+          $timelisting = create_timestring($item3->field_time_value, $item3->field_time_value2, TRUE);
+        }
+        // Find antal tilmeldte og tæl kurser
+        $user_status = 0;
+		$user_status = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE (attending = 1 OR waiting > 0) AND nid = :nid AND delta = :delta', array(':nid' => $item2->entity_id, ':delta' => $item2->delta))->fetchField();
+        $user_status_total = $user_status_total + $user_status;
+		$output .= '<p>' . $user_status . '&nbsp;&nbsp;&nbsp;' . $title . ', ' . $timelisting . '</p>';
+		$course_count = $course_count + 1;
+      }  
+    }
+	$output .= '<h3>Opsummering</h3><p>' . $user_status_total . ' tilmeldte fordelt på ' . $course_count . ' kurser.</p><br />';
+
+	$user_status_grand_total = $user_status_grand_total + $user_status_total;
+	$course_count_grand_total = $course_count_grand_total + $course_count;
+	$user_status_total = 0;
+	$course_count = 0;
+  }
+	$output .= '<h2>Opsummering, alle institutioner</h2><p>Fra 1. januar til dd har der været udbudt ' . $course_count_grand_total . ' kurser med i alt ' . $user_status_grand_total . ' tilmeldte.</p><br />';
+  return $output;
+
+}
+ 
+/**
+ * Get role name
+ */
+function get_role_name($role_id) {
+  $highest = 0;
+  $output = '';
+  $results = db_query('SELECT weight, name FROM {role} WHERE rid = :rid', array(':rid' => $role_id));
+  foreach ($results as $item) {
+    if ($item->weight > $highest) {
+      $highest = $item->weight;
+      $output = $item->name;
+    }
+  }
+
+  return $output;
+}
+
+
+/**
+ * Callback for menu filter_db
+ */
+function _db_filter($column, $value) {
+  global $user;
+  $uid = $user->uid;
+  //$column kan have værdierne sted, type og alle
+  $row_exists = db_query('SELECT uid FROM {cobook_user} WHERE uid = :uid', array(':uid' => $uid))->fetchField();
+  if ($row_exists) {
+    $query = db_update('cobook_user')
+      ->fields(array(
+        'usercol' => $column,
+        'userval' => $value,
+      ))
+      ->condition('uid', $uid)
+      ->execute();
+  } 
+  else
+  {
+    $query = db_insert('cobook_user') 
+      ->fields(array(
+       'uid' => $uid,
+       'usercol' => $column,  
+       'userval' => $value,
+       ))
+       ->execute();
+  }  
+  drupal_goto('/page_1');
+ 
+}
+
+
+/**
+ * Callback for menu filter
+ */
+function _do_filter() {
+  $type = 'kursus';
+  $result = db_query('SELECT * FROM {node} WHERE type= :type', array(':type' => $type));
+  $out = '';
+  foreach ($result as $row) {
+    $course_type = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $row->nid))->fetchField(); 
+    $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $row->nid))->fetchField(); 
+    // Registration of the times of the event and the delta value signifying each time set. There will be a row for each time set if the first time is not smaller than now.   
+    $result2 = db_query('SELECT field_time_value, field_time_value2, delta FROM {field_data_field_time} WHERE entity_id = :nid', array(':nid' => $row->nid));   
+    foreach ($result2 as $row2) {
+      $phptime = create_timestamp($row2->field_time_value);
+      $timenow = time();
+      if ($timenow < $phptime) {
+         
+        // delta and nid are registered in the array to facilitate links
+        $location2 = strtr($location, 'æøå', 'ÆØÅ');
+        $location2 = strtoupper($location2);
+        $location2 = strtr($location2, 'ÆØÅ', 'ÅÆØ');
+
+        $type2 = strtr($course_type, 'æøå', 'ÆØÅ');
+        $type2 = strtoupper($type2);
+        $type2 = strtr($type2, 'ÆØÅ', 'ÅÆØ');
+
+        $courses[] = array('where' => $location,'type' => $course_type, 'where2' => $location2, 'type2' => $type2);
+      } 
+    }
+  }  
+
+  if (isset($courses)) {
+
+    $sort_where = refine_sort($courses, 'where2'); 
+    $sort_type = refine_sort($courses, 'type2'); 
+    $wherelist = _distinct($sort_where,'where');
+    $typelist = _distinct($sort_type,'type');
+  }
+  
+  // Kan også laves uden p- og a-elementer.
+  // Der skal nu gemmes i databasen, og databaseværdien skal derefter bruges i funktionen front_page
+  
+  $options = '<div class="node"><h1>Vælg filtrering</h1><p><a href="/filter_db/alle/alle">Vis alle</a></p>';
+  
+  if (isset($courses)) {
+    foreach ($typelist as $item) {
+      $options .= '<p><a href="/filter_db/type/' . $item . '">' . $item . '</a></p>';
+    }
+    foreach ($wherelist as $item) {
+      $options .= '<p><a href="/filter_db/sted/' . $item . '">' . $item . '</a></p>';
+    }
+  }  
+  
+  $options .= '</div>';
+
+  return $options;
+
+}
+ 
+/**
+ * Implementation of hook_permission
+ *
+ */
+function cobook_permission() {
+  return array(
+    'admin_access' => array(
+      'title' => t('Copy access'),
+    ),
+    'staff_access' => array(
+      'title' => t('Staff access'),
+    ),
+    'auth_access' => array(
+      'title' => t('Authenticated access'),
+    ),
+  );
+}
+
+/**
+ * Callback for download
+ */
+function download_data() {
+  $output = '<table><tr><td><strong>Alle kurser</strong></td></tr></table>';
+  $type = 'kursus';
+  $result = db_query('SELECT * FROM {node} WHERE type= :type', array (':type' => $type));
+  foreach ($result as $item) {
+    $result2 = db_query('SELECT field_time_value, field_time_value2, delta FROM {field_data_field_time} WHERE entity_id = :nid ORDER BY field_time_value', array(':nid' => $item->nid));
+    foreach ($result2 as $item2) {
+      $output .= display_node_for_download($item->nid, $item2->delta);  
+      $output .= display_details($item->nid, $item2->delta);
+    }  
+  }
+  
+  return $output;
+}
+
+
+/**
+ * Backup af tidligere callback for download
+ */
+function download_data_backup() {
+  $result = db_query('SELECT * FROM {cobook_attendance} WHERE 1 ORDER BY nid');
+  $output = '<table><tr><td><strong>Indhold af tabellen cobook_attendance:</strong></td></tr></table>';
+  $output .= '<table><tr><th>Løbenummer</th><th>Bruger-id</th><th>Node-id</th><th>Dato-id</th><th>Attending (1 Deltager, 2 Frameldt)</th><th>Venteliste (0 Venter ikke)</th><th>Navn</th><th>Mobilnummer</th><th>Fastnetnummer</th><th>Mailadresse</th></tr>';
+  foreach ($result as $item) {
+    $output .= '<tr><td>' . $item->cid . '</td><td>' . $item->uid . '</td><td>' . $item->nid . '</td><td>' . $item->delta . '</td><td>' . $item->attending .  '</td><td>' . $item->waiting . '</td><td>' . $item->name .  '</td><td>' . $item->mobile .  '</td><td>' . $item->phone .  '</td><td>' . $item->email . '</td></tr>';
+  }
+  $output .= '</table>';
+
+  $result = db_query('SELECT * FROM {cobook_status} WHERE 1');
+  $output .= '<table><tr><td><strong>Indhold af tabellen cobook_status:</strong></td></tr></table>';
+  $output .= '<table><tr><th>Node-id</th><th>Dato-id</th><th>Status</th><th>Reminders</th><th>FaktisKe antal deltagere</th></tr>';
+  foreach ($result as $item) {
+    $output .= '<tr><td>' . $item->nid . '</td><td>' . $item->delta . '</td><td>' . $item->status . '</td><td>' . $item->reminders . '</td><td>' . $item->actual_attendees .  '</td></tr>';
+  }
+  $output .= '</table>';
+
+  return $output;
+}
+
+
+/**
+ * Callback for copy
+ */
+ function copy_node($nid) {
+   global $user;
+
+   $result = db_query('SELECT * FROM {node} WHERE nid = :nid', array(':nid' => $nid));
+   foreach ($result as $item) {
+     if ($item->type != 'kursus') {
+       $message = t('You can not copy this type of content.');
+       drupal_set_message($message, 'error'); 
+       return '';
+     }
+     $node = new stdClass();
+     $node->title = $item->title;
+     
+    
+     $node->type = $item->type;
+     node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+     $node->language = LANGUAGE_NONE;
+     //$node->language = 'da';
+     $node->uid = $user->uid; 
+     $node->status = $item->status;
+     $node->promote = $item->promote;
+     $node->comment = $item->comment;  
+     $result2 = db_query('SELECT body_value, body_format, body_summary FROM {field_data_body} WHERE entity_id = :nid', array(':nid' => $item->nid));
+     foreach ($result2 as $item2) {
+       $node->body[$node->language][0]['value'] = $item2->body_value;
+       $node->body[$node->language][0]['summary'] = $item2->body_summary;
+       $node->body[$node->language][0]['format'] = $item2->body_format;
+     }  
+     $result3 = db_query('SELECT field_picture_fid, field_picture_alt, field_picture_title, field_picture_width, field_picture_height FROM {field_data_field_picture} WHERE entity_id = :nid', array(':nid' => $item->nid));
+     foreach ($result3 as $item3) {
+       $node->field_picture[$node->language][0]['fid'] = $item3->field_picture_fid;
+       $node->field_picture[$node->language][0]['alt'] = $item3->field_picture_alt;
+       $node->field_picture[$node->language][0]['title'] = $item3->field_picture_title;
+       $node->field_picture[$node->language][0]['width'] = $item3->field_picture_width;
+       $node->field_picture[$node->language][0]['height'] = $item3->field_picture_height;
+     }
+     $result4 = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $item->nid)); 
+     foreach ($result4 as $item4) {
+       $node->field_participants[$node->language][0]['value'] = $item4->field_participants_value;
+     }
+     $result5 = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $item->nid));
+     foreach ($result5 as $item5) {
+       $node->field_waiting_list[$node->language][0]['value'] = $item5->field_waiting_list_value;
+     }  
+     $result6 = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $item->nid));
+     foreach ($result6 as $item6) {
+       $node->field_type[$node->language][0]['value'] = $item6->field_type_value;
+     }
+     $result7 = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $item->nid)); 
+     foreach ($result7 as $item7) {
+       $node->field_category[$node->language][0]['value'] = $item7->field_category_value;
+     }
+       
+     node_save($node);
+     
+     // The node has a nid, after it has been saved.
+     drupal_goto('node/' . $node->nid . '/edit');
+   }
+   return 'No node created.';
+ }
+
+/**
+ * Callback for display_node
+ */
+function display_node($nid, $delta) {
+  update_cobook_tables($nid, $delta);
+  $status = check_status($nid, $delta);
+  $node = node_load($nid);
+  $result = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+  $result2 = db_query('SELECT body_value, body_format, body_summary FROM {field_data_body} WHERE entity_id = :nid', array(':nid' => $nid));
+  $result5 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta));
+  $result6 = db_query('SELECT field_location_value FROM {field_data_field_location } WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  $result7 = db_query('SELECT field_picture_fid FROM {field_data_field_picture} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+  $result8 = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  if ($result7 != '') {
+    $picture = file_load($result7);
+  }  
+  $out = '<h1 class="title" id="page-title">' . $node->title .  '</h1>';
+  $out .= '<div class="node"><h3>' . $node->title .  '</h3>';
+  
+  global $user;
+  $waiting = db_query('SELECT waiting FROM {cobook_attendance} WHERE attending = 0 AND waiting > 0 AND uid = :uid AND nid = :nid AND delta = :delta', array(':uid' => $user->uid, ':nid' => $nid, ':delta' => $delta))->fetchField();
+  $attending = db_query('SELECT attending FROM {cobook_attendance} WHERE attending = 1 AND uid = :uid AND nid = :nid AND delta = :delta', array(':uid' => $user->uid, ':nid' => $nid, ':delta' => $delta))->fetchField();
+  $text = '';
+  if (isset($waiting)) {
+    if ($waiting > 0) {
+      $text = 'Du er på venteliste.';  
+    }
+  }  
+  if (isset($attending)) {
+    if ($attending == 1) {
+      $text = 'Du er tilmeldt.';
+    }
+  }  
+  switch($status) {
+    case 'Ledige pladser':
+      if ($text == '') {
+        $message = '<a href="/enrol/' . $nid . '/' . $delta . '"><strong>Tilmeld dig</strong></a>';
+      } else {
+        $message = $text;
+      }
+      break;
+    case 'Plads på venteliste':
+      if ($text == '') {
+        $message = '<a href="/enrol/' . $nid . '/' . $delta . '"><strong>Meld dig til venteliste</strong></a>';
+      } else {
+        $message = $text;
+      }
+      break;
+    case 'Optaget':
+      if ($text == '') {
+        $message = 'Kurset er fuldt optaget.';
+      } else {
+        $message = $text;
+      }  
+      break;
+    case 'Aflyst':
+      $message = 'Kurset er aflyst.';
+  }    
+  $out .= '<p>' . $message . '</p>'; 
+  foreach ($result2 as $item2) {
+    $out .= '<p>' . $item2->body_value . '</p>';
+  }  
+  $out .= '<p>' . 'Kategori: ' . $result8 . '.</p>';
+  if (isset($picture->filename)) {
+    $out .= '<img src="/sites/default/files/' . $picture->filename . '">';
+  }  
+  foreach ($result5 as $item5) {
+    $timelisting = create_timestring($item5->field_time_value, $item5->field_time_value2, TRUE);
+    $out .= '<p>' . $timelisting . '</p>';
+  }  
+  $out .= '<p>' . 'Afholdes på ' . $result6 . '.</p>';
+  $out .= '<p>' . 'Kursets type: ' . $result . '</p>';
+  $out .= '</div>';
+  return $out;
+}
+
+/**
+ * Callback for undo
+ */
+function undo_cancellation($nid, $delta) {
+
+  $link = 'Ledige pladser';
+  $query = db_update('cobook_status')
+    ->fields(array(
+      'status' => $link,
+    ))
+    ->condition('nid', $nid)
+    ->condition('delta', $delta)
+    ->execute();
+  update_cobook_tables($nid, $delta);   
+  $message = t('The cancellation of the course has become undone');
+  drupal_set_message('Kurset er ikke længere aflyst.'); 
+  $url = 'manage/' . $nid . '/' . $delta;
+  drupal_goto($url); 
+}
+
+/**
+ * Callback for cancellation
+ */
+function cancellation($nid, $delta) {
+  $link = 'Aflyst';
+  $row_exists = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))->fetchField();
+  if ($row_exists) {
+    $query = db_update('cobook_status')
+      ->fields(array(
+        'status' => $link,
+      ))
+      ->condition('nid', $nid)
+      ->condition('delta', $delta)
+      ->execute();
+  } 
+  else
+  {
+    $query = db_insert('cobook_status') 
+      ->fields(array(
+       'status' => $link,  
+       'nid' => $nid,
+       'delta' => $delta,
+       'reminders' => 0,
+       ))
+       ->execute();
+  }
+  $message = t('It has been registered that the course has been cancelled');
+  drupal_set_message('Kurset er registreret som aflyst'); 
+  $url = 'msg_batch/' . $nid . '/' . $delta;
+  drupal_goto($url);
+ }
+ 
+/**
+ * Callback for reminders
+ */
+
+function update_reminders($return = TRUE) {
+  $cur_time = time();
+  $got_date = getdate($cur_time);
+  $cur_hour = $got_date['hours'];
+  $mday = $got_date['mday'];
+  if ($cur_hour > 7 && $cur_hour < 22) {
+    // time() returns current Unix timestamp, the current time measured in the number of seconds since the Unix Epoch (January 1 1970 00:00:00 GMT).
+    $current_time = time();
+    // 259200 is three days, 345600 is four days
+    $third_day = $current_time - ($current_time % 86400) + 259200; 
+    $fourth_day = $current_time - ($current_time % 86400)  + 345600;
+    $date1 = getdate($third_day);
+    $date2 = getdate($fourth_day);
+    $from_day = '"' . $date1['year'] . '-' . $date1['mon'] . '-' . $date1['mday'] . '"';
+    $to_day = '"' . $date2['year'] . '-' . $date2['mon'] . '-' . $date2['mday'] . '"';
+    $message = 'REMINDERS';
+    // Søg i databasen efter alle kurser
+    $result = db_query('SELECT entity_id, delta, field_time_value, field_time_value2 FROM {field_data_field_time}');
+    $status = 'Aflyst';
+    foreach ($result as $item) {
+      $stamp1 = create_timestamp($item->field_time_value);
+      // Limit to courses from now and the next three days
+      if (($stamp1 > $current_time) && ($stamp1 < $fourth_day)){
+        $message .= '<br>' . $item->field_time_value;
+        $result2 = db_query('SELECT reminders FROM {cobook_status} WHERE delta = :delta AND nid = :nid AND status <> :status', array(':nid' => $item->entity_id, ':delta' => $item->delta, ':status' => $status));
+        foreach ($result2 as $item2) {
+          if ($item2->reminders == 0) {
+            // create text presenting the course in $event
+            $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $item->entity_id))->fetchField();
+            $type = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $item->entity_id))->fetchField();  
+            $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $item->entity_id))->fetchField(); 
+            $timelisting = create_timestring($item->field_time_value, $item->field_time_value2, FALSE) . ' på ' . $location; 
+            $event = '"' . $title . '" ' . $timelisting;
+ 
+            // send beskeder
+            $attendees = db_query('SELECT uid, name, email, mobile FROM {cobook_attendance} where attending = 1 AND nid = :nid AND delta = :delta', array(':nid' => $item->entity_id, ':delta' => $item->delta));
+            $mobile_flag = FALSE;
+            $mail_flag = FALSE; 
+            $mobiles = array();
+            $mails = array();
+            foreach ($attendees as $att) {
+              $name = $att->name;
+              $email = $att->email;
+              $mobile = $att->mobile;
+              $mobile = str_ireplace(' ', '', $mobile);
+              if ($att->uid) {
+                $result3 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $att->uid));
+                foreach ($result3 as $item3) {
+                  $name = $item3->name;
+                  $email = $item3->mail;
+                  $email = trim($email);
+                }
+                $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $att->uid))->fetchField();
+                $mobile = str_ireplace(' ', '', $mobile);
+                }
+              if (strlen($mobile) == 8) {
+                $mobiles[] = $mobile; 
+                $mobile_flag = TRUE;
+              } else  {
+                if (strlen($email) > 0) { 
+                  $mails[] = $email; 
+                  $mail_flag = TRUE;
+                }
+              }   
+            }
+            if (!$mobile_flag) $mobiles[] = '';
+            if (!$mail_flag) $mails[] = ''; 
+            if ($type == 'Digital Københavner') {
+              $sms = 'Husk, at du er tilmeldt ' . $event . '. Husk dit nøglekort.';      
+            } else {
+              $sms = 'Husk, at du er tilmeldt ' . $event . '.';      
+            }  
+            $param['message'] = $sms;
+            if ($type == 'Digital Københavner') {
+              $param['subject'] = 'Husk dit kursus og dit nøglekort';
+            } else {
+              $param['subject'] = 'Husk dit kursus';
+            }  
+            $module = 'cobook';
+            $key = 'batch';
+            $language = language_default();
+            foreach ($mails as $mail_add) {
+              if ($mail_add) {   
+                drupal_mail($module, $key, $mail_add, $language, $param);  
+                watchdog('E-mail', 'Husk dit kursus: ' . $mail_add);
+              }  
+            }
+            foreach ($mobiles as $mob_no) {
+              if (strlen($mob_no) > 0) {   
+                $short_msg = 'http://smssys.dk/?countrycode=45&charset=UTF-8&number=' . $mob_no . '&message=' . $sms . '&user=kkb2&pass=2895';
+                $short_msg = str_ireplace(' ', '+', $short_msg);
+                $result = fopen($short_msg, "r");           
+                watchdog('SMS', 'Husk dit kursus: ' . $mob_no);
+              }  
+            } 
+            $message .= '<p>Reminders have been sent to attendees of ' . $item->entity_id . ', ' . $item->delta . '.</p>'; 
+ 
+            //update cobook_status
+            $query = db_update('cobook_status')
+              ->fields(array(
+                'reminders' => 1,
+              ))
+              ->condition('nid', $item->entity_id)
+              ->condition('delta', $item->delta)
+              ->execute(); 
+          }
+        }
+      }
+    } 
+    if ($return) return $message;
+  } else {
+    $message = 'Update of reminders is rejected during the night.';
+    if ($return) return $message;
+  }
+}
+
+/**
+ * Callback for book_bibliotekar
+ */
+function book_librarian() {
+  return 'Her kommer der sider for "Book en bibliotekar".';
+}
+ 
+/**
+ * Callback for klub
+ */
+function club() {
+  return 'Her kommer der sider for læseklubber.';
+}
+ 
+/**
+ * Callback for studiekreds
+ */
+function study_circle() {
+ /* $handle = printer_open();
+  printer_write($handle, "Text to print");
+  printer_close($handle); */
+
+  return 'Her kommer der sider for studiekredse.';
+}
+ 
+/**
+ * Callback for orientering
+ */
+function orientation() {
+  $message = 'Her kommer der sider for orientering af skoleklasser.';
+  return $message;
+}
+ 
+/**
+ * Callback for help
+ */
+function manage_help() {
+  global $user;
+
+  $role_name = '';
+  $title = "Hjælp for brugere uden konto";
+  
+  if ($user->uid != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user->uid))->fetchField();
+    $role_name = get_role_name($role_id);
+    switch($role_name) {
+      case 'administrator':
+        $title = "Hjælp for administratorer";
+        break;
+      case 'personale':
+        $title = "Hjælp for personale";
+        break;
+      case 'lokaladministrator':
+        $title = "Hjælp for lokaladministratorer";
+        break;
+      case '':
+        $title = "Hjælp for brugere med en konto";
+    }    
+  }
+  $nid = db_query('SELECT nid FROM {node} WHERE title = :title', array(':title' => $title))->fetchField();
+  if ($nid) {
+    drupal_goto('node/' . $nid);
+  }
+  
+  return "Hjælpeside mangler";
+
+}
+
+/**
+ * Sender beskeder til alle eller evt. kun til egentlige deltagere eller dem på venteliste ved aflysning eller andet.
+ */
+function send_batch_of_msgs($nid, $delta) {
+  $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $nid))->fetchField();
+  $result2 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta));   
+  $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  foreach ($result2 as $row2) {
+    $timelisting = create_timestring($row2->field_time_value, $row2->field_time_value2, FALSE) . ' på ' . $location; 
+  }
+  $event_name = '"' . $title . '" ' . $timelisting;
+  $attendees = db_query('SELECT attending, waiting, uid, name, email, mobile FROM {cobook_attendance} where (attending = 1 OR waiting > 0) AND nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta));
+  $mobile_flag = FALSE;
+  $mail_flag = FALSE; 
+  $mobile2_flag = FALSE;
+  $mail2_flag = FALSE; 
+  foreach ($attendees as $item) {
+    $email = '';
+    $mobile ='';
+    $email2 = '';
+    $mobile2 ='';
+    if ($item->attending == 1) {
+      $name = $item->name;
+      $email = $item->email;
+      $mobile = $item->mobile;
+      $mobile = str_ireplace(' ', '', $mobile);
+    } else {
+      $name2 = $item->name;
+      $email2 = $item->email;
+      $mobile2 = $item->mobile;
+      $mobile2 = str_ireplace(' ', '', $mobile2);
+    }
+    if ($item->uid) {
+      $result2 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item->uid));
+      foreach ($result2 as $item2) {
+        if ($item->attending == 1) {
+          $name = $item2->name;
+          $email = $item2->mail;
+          $email = trim($email);
+        } else {
+          $name2 = $item2->name;
+          $email2 = $item2->mail;
+          $email2 = trim($email2);
+        }
+      }
+      if ($item->attending == 1) {
+        $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item->uid))->fetchField();
+        $mobile = str_ireplace(' ', '', $mobile);
+      } else {
+        $mobile2 = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item->uid))->fetchField();
+        $mobile2 = str_ireplace(' ', '', $mobile2);
+      }
+    }
+    if (isset($mobile)) {
+      if (strlen($mobile) == 8) {
+        $mobiles[] = $mobile; 
+        $mobile_flag = TRUE;
+      } else  {
+        if (isset($email)) {
+          if (strlen($email) > 0) { 
+            $mails[] = $email; 
+            $mail_flag = TRUE;
+          }
+        }
+      }   
+    }  
+    if (isset($mobile2)) {  
+      if (strlen($mobile2) == 8) {
+        $mobiles2[] = $mobile2; 
+        $mobile2_flag = TRUE;
+      } else  {
+        if (isset($email2)) {
+          if (strlen($email2) > 0) { 
+            $mails2[] = $email2; 
+            $mail2_flag = TRUE;
+          }
+        }
+      }
+    }  
+  }
+  if (!$mobile_flag) $mobiles[] = '';
+  if (!$mail_flag) $mails[] = ''; 
+  if (!$mobile2_flag) $mobiles2[] = '';
+  if (!$mail2_flag) $mails2[] = ''; 
+  $header = 'Acceptér eller redigér formularens indhold, og tryk på Send.';
+  return drupal_get_form('send_msgs_form', $header, $mails, $mobiles, $mails2, $mobiles2, $nid, $delta, $event_name); 
+}
+
+/**
+ * Implements hook_mail
+ */
+function cobook_mail($key, &$message, $params) {
+    //$data['user'] = $params['account'];
+    $options['language'] = $message['language'];
+    //user_mail_tokens($variables, $data, $options);
+    switch($key) {
+      case 'notice':
+        $langcode = $message['language']->language;
+        $message['subject'] = t('Besked fra Københavns Biblioteker'); 
+        $message['body'][] = "Kære " . $params['name'] . ".\n\nDu er optaget på kurset " . $params['titlentime'] . ".\n\nDu var på venteliste, og der er blevet en ledig plads.\n\nVi glæder os til at se dig.\n\nMed venlig hilsen\nKøbenhavns Biblioteker\n\nFølg kurserne på http://kurserogklubber.dk.";
+        break;
+      case 'batch':
+        $langcode = $message['language']->language;
+        $message['subject'] = $params['subject']; 
+        $message['body'][] = $params['message']; 
+        break;
+    }
+  }
+
+/**
+ * Send notification about move from wait list to attendance list.
+ */
+function send_notification($cid) {
+  $module = 'cobook';
+  $key = 'notice';
+  $language = language_default();
+  $result = db_query('SELECT uid, nid, name, email, delta, mobile FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid));
+  foreach ($result as $item) {
+    $name = $item->name;
+    $email = $item->email;
+    $mobile = $item->mobile;
+    if ($item->uid) {
+      $result2 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item->uid));
+      foreach ($result2 as $item2) {
+        $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item2->uid))->fetchField();
+        $name = $item2->name;
+        $email = $item2->mail;
+      }
+    }    
+    $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $item->nid))->fetchField();
+    $result2 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta));   
+    $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField(); 
+    foreach ($result2 as $row2) {
+      $timelisting = create_timestring($row2->field_time_value, $row2->field_time_value2, FALSE) . ' på ' . $location; 
+    }
+    $titlentime = '"' . $title . '", der afholdes ' . $timelisting;
+    
+  }
+  $mobile = str_ireplace(' ', '', $mobile);
+  if (strlen($mobile) == 8) {
+    $sms = 'Du er nu optaget på '. $titlentime . '.';
+    $short_msg = 'http://smssys.dk/?countrycode=45&charset=UTF-8&number=' . $mobile . '&message=' . $sms . '&user=kkb2&pass=2895';
+    $short_msg = str_ireplace(' ', '+', $short_msg);
+    $result = fopen($short_msg, "r");           
+    $message = 'Der er afsendt en sms til ' . $name . '.';
+    watchdog('SMS', 'Optaget på kursus: ' . $mobile);
+    drupal_set_message($message);
+  }  else { 
+    if ($email) {
+      $param['titlentime'] = $titlentime;
+      $param['name'] = $name;
+      drupal_mail($module, $key, $email, $language, $param);  
+      watchdog('E-mail', 'Optaget på kursus: ' . $email);
+      $message = 'Der er afsendt en e-mail til ' . $name . '.';
+      drupal_set_message($message);
+    }
+  }  
+}
+ 
+ 
+ 
+/**
+ * Returns Danish names of months
+ */
+function dk_month($number) {
+  switch ($number) {
+    case 1: return 'januar';
+    case 2: return 'februar';
+    case 3: return 'marts';
+    case 4: return 'april';
+    case 5: return 'maj';
+    case 6: return 'juni';
+    case 7: return 'juli';
+    case 8: return 'august';
+    case 9: return 'september';
+    case 10: return 'oktober';
+    case 11: return 'november';
+    case 12: return 'december';
+  }
+}
+
+/**
+ * Returns Danish names of days
+ */
+function dk_weekday($number) {
+  switch ($number) {
+    case 0: return 'Søndag';
+    case 1: return 'Mandag';
+    case 2: return 'Tirsdag';
+    case 3: return 'Onsdag';
+    case 4: return 'Torsdag';
+    case 5: return 'Fredag';
+    case 6: return 'Lørdag';
+  }
+}
+
+/**
+ * Returns Danish names of days version 2
+ */
+function dk_weekday2($number) {
+  switch ($number) {
+    case 0: return 'søndag';
+    case 1: return 'mandag';
+    case 2: return 'tirsdag';
+    case 3: return 'onsdag';
+    case 4: return 'torsdag';
+    case 5: return 'fredag';
+    case 6: return 'lørdag';
+  }
+}
+
+/**
+ * When a sorting with this function has been performed on one key, the same function can be used for a second sorting on another key. 
+ * Key number 2 will then take precedence over key number 1.
+ * When the function has been used for a third sorting, key number 3 will have precedence over key 2, which will still have precedence over key 1.
+ * You could make more than 3 sortings
+ */
+function refine_sort($array, $key) {
+  $first = TRUE;
+  foreach ($array as $row) {
+    if ($first) {
+      $first = FALSE;
+      $keys[] = $row[$key];
+    } else {
+      $known = FALSE;
+      foreach ($keys as $value) {
+        if ($row[$key] == $value) $known = TRUE;
+      }
+      if ($known == FALSE) $keys[] = $row[$key];
+    }
+  }
+  sort($keys);
+  foreach ($keys as $value) {
+    foreach ($array as $row) {
+      if ($row[$key] == $value) $out[] = $row;
+    }
+  }
+  return $out;
+}
+
+/**
+ * String with date and time is created, like Søndag den 1. marts kl. 9.30-11.30
+ */
+function create_timestring($SQL_time_1, $SQL_time_2, $capital) {
+  $datentime_1 = getdate(create_timestamp($SQL_time_1));
+  $datentime_2 = getdate(create_timestamp($SQL_time_2));
+  if ($capital) {
+    $out = dk_weekday($datentime_1['wday']);
+  } else {
+    $out = dk_weekday2($datentime_1['wday']);
+  }  
+  $out .= ' den ' . $datentime_1['mday'] . '. ' . dk_month($datentime_1['mon']) . ' ' . $datentime_1['year'] . ' kl. ' . $datentime_1['hours'] . '.' . substr($SQL_time_1,14,2) . '-' . $datentime_2['hours'] . '.' . substr($SQL_time_2,14,2);
+  return $out;
+}
+
+/**
+ * String with date and time is created, like Søndag den 1. marts kl. 9.30-11.30
+ */
+function create_timecolumns($SQL_time_1, $SQL_time_2, $capital) {
+  $datentime_1 = getdate(create_timestamp($SQL_time_1));
+  $datentime_2 = getdate(create_timestamp($SQL_time_2));
+  if ($capital) {
+    $out = dk_weekday($datentime_1['wday']);
+  } else {
+    $out = dk_weekday2($datentime_1['wday']);
+  }  
+  $out .= '</td><td>' . $datentime_1['mday'] . '. ' . dk_month($datentime_1['mon']) . ' ' . $datentime_1['year'] . '</td><td>' . $datentime_1['hours'] . '.' . substr($SQL_time_1,14,2) . '-' . $datentime_2['hours'] . '.' . substr($SQL_time_2,14,2);
+  return $out;
+}
+
+/**
+ * Implementation of older_courses
+ */
+function older_courses() {
+  $out = '<h1 class="title" id="page-title">Tidligere kurser</h1>';
+  $out .= '<table><tr><td><a href="page_1">Vis nuværende kurser</a></td></tr></table>';
+  $out .= '<div><table><thead><tr><th>Tid</th><th></th><th></th><th>Tilmelding</th><th></th><th>Kursets navn</th><th>Kategori</th><th>Kursets sted</th><th>Kursets type</th></tr></thead><tbody>';
+  $result = db_query('SELECT field_time_value, field_time_value2, entity_id, delta FROM {field_data_field_time} ORDER BY field_time_value DESC');
+  foreach ($result as $item) {
+    $phptime = create_timestamp($item->field_time_value);
+    if (time() > $phptime) {
+      update_cobook_tables($item->entity_id, $item->delta);
+      $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $item->entity_id))->fetchField();
+      $status = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid and delta = :delta', array(':nid' => $item->entity_id, ':delta' => $item->delta))->fetchField();
+      $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $item->entity_id))->fetchField(); 
+      $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $item->entity_id))->fetchField(); 
+      $type = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $item->entity_id))->fetchField(); 
+      $timelisting = create_timecolumns($item->field_time_value, $item->field_time_value2, TRUE); 
+      $out .= '<td>' . $timelisting . '</td><td>' . $status . '</td><td><a href="/manage/' . $item->entity_id . '/' . $item->delta . '">Administrér</a></td><td>' . '<a href="/node/' . $item->entity_id . '">' . $title . '</a>' . '</td><td>' . $category . '</td><td>' . $location . '</td><td>' . $type . '</td></tr>';
+    }  
+  }
+  $out .= '</tbody></table></div>';
+  return $out; 
+}
+
+/**
+ * Extraction of distinct values in list
+ */
+function _distinct($array, $key) {
+  $first = TRUE;
+  foreach ($array as $row) {
+    if ($first) {
+      $first = FALSE;
+      $keys[] = $row[$key];
+    } else {
+      $known = FALSE;
+      foreach ($keys as $value) {
+        if ($row[$key] == $value) $known = TRUE;
+      }
+      if ($known == FALSE) $keys[] = $row[$key];
+    }
+  }
+  sort($keys);
+  return $keys;
+}
+
+/**
+ * Callback for page_1
+ */
+function front_page($sort_method = 0) {
+  $cur_time = time();
+  $got_date = getdate($cur_time);
+  $cur_hour = $got_date['hours'];
+  $mday = $got_date['mday'];
+  if ($cur_hour > 7 && $cur_hour < 22) {
+    update_reminders(FALSE); 
+  }  
+  global $user;
+  $role_name = ''; 
+  if ($user->uid != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user->uid))->fetchField();
+    $role_name = get_role_name($role_id);
+  }  
+  $type = 'kursus';
+  $result = db_query('SELECT * FROM {node} WHERE type= :type', array(':type' => $type));
+  $out = '';
+  foreach ($result as $row) {
+    $course_type = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $row->nid))->fetchField(); 
+    $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $row->nid))->fetchField(); 
+    $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $row->nid))->fetchField(); 
+    // Registration of the times of the event and the delta value signifying each time set. There will be a row for each time set if the first time is not smaller than now.   
+    $result2 = db_query('SELECT field_time_value, field_time_value2, delta FROM {field_data_field_time} WHERE entity_id = :nid', array(':nid' => $row->nid));   
+    foreach ($result2 as $row2) {
+      $phptime = create_timestamp($row2->field_time_value);
+      $timenow = time();
+      if ($timenow < $phptime) {
+        update_cobook_tables($row->nid, $row2->delta);
+        $status = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $row->nid, ':delta' => $row2->delta))->fetchField();
+         
+        // Status has to be personalized for authorized users
+        if ($user->uid != 0) { 
+          if ($role_name == '') {
+            $result3 = db_query('SELECT cid, nid, attending, waiting FROM {cobook_attendance} WHERE uid = :uid AND nid = :nid AND delta = :delta', array(':uid' => $user->uid,':nid' => $row->nid, ':delta' => $row2->delta));
+            foreach ($result3 as $row3) {
+              if ($row3->waiting > 0 AND $status != 'Aflyst') {
+                $status = 'Du er på venteliste';
+              } 
+              if ($row3->attending == 1 AND $status != 'Aflyst') {
+                $status = 'Du er tilmeldt';
+              } 
+            }
+            if ($status == 'Ledige pladser') {
+              $status = 'Tilmeld dig';
+            } 
+            if ($status == 'Plads på venteliste') {
+              $status = 'Meld dig til venteliste';
+            }                
+          } else {
+            if ($status == 'Ledige pladser') {
+              $status = 'Tilmeld';
+            } 
+            if ($status == 'Plads på venteliste') {
+              $status = 'Meld til venteliste';
+            }                
+          }
+        }  
+
+        $timelisting = create_timecolumns($row2->field_time_value, $row2->field_time_value2, TRUE); 
+        // delta and nid are registered in the array to facilitate links
+        $location2 = strtr($location, 'æøå', 'ÆØÅ');
+        $location2 = strtoupper($location2);
+        $location2 = strtr($location2, 'ÆØÅ', 'ÅÆØ');
+
+        $type2 = strtr($course_type, 'æøå', 'ÆØÅ');
+        $type2 = strtoupper($type2);
+        $type2 = strtr($type2, 'ÆØÅ', 'ÅÆØ');
+
+        $title2 = strtr($row->title, 'æøå', 'ÆØÅ');
+        $title2 = strtoupper($title2);
+        $title2 = strtr($title2, 'ÆØÅ', 'ÅÆØ');
+
+        $courses[] = array('when' => $phptime,'exptime' => $timelisting,'status' => $status,'title' => $row->title,'category' => $category, 'where' => $location,'type' => $course_type,'nid' =>$row->nid, 'delta' => $row2->delta, 'where2' => $location2, 'type2' => $type2, 'title2' => $title2);
+      } 
+    }
+  }  
+
+  if ($sort_method > 0) {
+    $out .= '<h1 class="title" id="page-title">Kurser</h1>';
+  }  
+  
+  $filter_value = db_query('SELECT userval FROM {cobook_user} WHERE uid = :uid', array(':uid' => $user->uid))->fetchField();
+  if ($filter_value == '') {
+    $filter_value = 'alle';
+  }  
+  
+  
+  if ($user->uid != 0) {
+    if ($role_name == '') {
+      $out .= '<table><tr><td><a href="/attendee_list">Se dine tilmeldinger</a></td></tr></table>';
+    } else {
+      if ($role_name == 'personale') {
+        $out .= '<table><tr><td><a href="/older_courses">Vis tidligere kurser</a></td></tr></table>';
+      } else {  
+        $out .= '<table><tr><td><a href="/older_courses">Vis tidligere kurser</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/filter">Filter</a>: ' . $filter_value . '</td></tr></table>';
+      }  
+    }
+  } 
+
+  if ($role_name == '') {
+    $out .= '<div><table><thead><tr><th><a href="/page_1/1">Tid</a></th><th></th><th></th><th>Tilmelding</th><th><a href="/page_1/4">Kursets navn</a></th><th>Kategori</th><th><a href="/page_1/3">Kursets sted</a></th><th><a href="/page_1/2">Kursets type</a></th></tr></thead><tbody>';
+  } else {  
+    $out .= '<div><table><thead><tr><th><a href="/page_1/1">Tid</a></th><th></th><th></th><th>Tilmelding</th><th></th><th><a href="/page_1/4">Kursets navn</a></th><th>Kategori</th><th><a href="/page_1/3">Kursets sted</a></th><th><a href="/page_1/2">Kursets type</a></th></tr></thead><tbody>';
+  }  
+  $number = 0;
+
+  if (!isset($courses)) {
+    $out .= '</tbody></table></div>';
+    return $out; 
+  }
+
+  // Ín these few lines we will apply the filter
+  if ($user->uid != 0) {
+    $c_user = db_query('SELECT usercol, userval FROM {cobook_user} WHERE uid = :uid', array(':uid' => $user->uid));
+    foreach ($c_user as $c_item) {
+      if ($c_item->usercol == 'type') {
+        foreach ($courses as $item) {
+          if ($item['type'] == $c_item->userval) {
+            $buffer[] = $item;
+          }
+        }
+      }  
+      if ($c_item->usercol == 'sted') {
+        foreach ($courses as $item) {
+          if ($item['where'] == $c_item->userval) {
+            $buffer[] = $item;
+          }
+        }  
+      }    
+      if ($c_item->usercol != 'alle') {
+        if (!isset($buffer)) {
+          $out .= '</tbody></table></div>';
+          return $out; 
+        } else {
+          $courses = $buffer;
+        }  
+      } 
+    }
+  }
+
+  // First sorting
+  $sorted = refine_sort($courses,'when');
+
+  if ($sort_method == 2) {
+    $sorted = refine_sort($sorted, 'type2'); 
+  }
+
+  if ($sort_method == 3) {
+    $sorted = refine_sort($sorted, 'type2'); 
+    $sorted = refine_sort($sorted, 'where2'); 
+  }
+
+  if ($sort_method == 4) {
+    $sorted = refine_sort($sorted, 'title2'); 
+  }
+
+  foreach ($sorted as $course) {
+    if (($course['type'] != 'Interne kurser') || ( ($course['type'] == 'Interne kurser') && ( ($role_name == 'administrator') || ($role_name == 'lokaladministrator')  || ($role_name == 'personale')) )) {   
+      $number += 1;
+      if ($number % 2 == 0) {
+        $out .= '<tr class="even">';
+      }
+      else {
+        $out .= '<tr class="odd">';
+      }  
+      if (($course['status'] == 'Tilmeld') || ($course['status'] == 'Meld til venteliste') || ($course['status'] == 'Tilmeld dig') || ($course['status'] == 'Meld dig til venteliste')) { 
+        if ($role_name == '') {
+          $out .= '<td>' . $course['exptime'] . '</td><td>' . '<a href="/enrol/' . $course['nid'] . '/' . $course['delta'] . '">' . $course['status'] . '</a>' . '</td><td>' . '<a href="/display_node/' . $course['nid'] . '/' . $course['delta'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+        } else {  
+          $out .= '<td>' . $course['exptime'] . '</td><td>' . '<a href="/enrol/' . $course['nid'] . '/' . $course['delta'] . '">' . $course['status'] . '</a>' . '</td><td><a href="/manage/' . $course['nid'] . '/' . $course['delta'] . '">Administrér</a></td><td>' . '<a href="/node/' . $course['nid'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+        }  
+      } else
+      {
+        if ($role_name == '') {
+          if (($user->uid == 0) && ($course['status'] == 'Ledige pladser' || $course['status'] == 'Plads på venteliste')) {
+            $out .= '<td>' . $course['exptime'] . '</td><td><a href="/enrol/' . $course['nid'] . '/' . $course['delta'] . '">' . $course['status'] . '</a></td><td>' . '<a href="/node/' . $course['nid'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+          } else {  
+            $ret = '';
+            if ($course['status'] == 'Du er tilmeldt' || $course['status'] == 'Du er på venteliste') { $ret = ' - <a href="/attendee_list">Ret</a>'; }
+            if ($user->uid == 0) {
+              $out .= '<td>' . $course['exptime'] . '</td><td>' . $course['status'] . $ret . '</td><td>' . '<a href="/node/' . $course['nid'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+            } else {
+              $out .= '<td>' . $course['exptime'] . '</td><td>' . $course['status'] . $ret . '</td><td>' . '<a href="/display_node/' . $course['nid'] . '/' . $course['delta'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+            }
+          }  
+        } else {  
+          $out .= '<td>' . $course['exptime'] . '</td><td>' . $course['status'] . '</td><td><a href="/manage/' . $course['nid'] . '/' . $course['delta'] . '">Administrér</a></td><td>' . '<a href="/node/' . $course['nid'] . '">' . $course['title'] . '</a>' . '</td><td>' . $course['category'] . '</td><td>' . $course['where'] . '</td><td>' . $course['type'] . '</td></tr>';
+        }  
+      }  
+    }
+  }
+  
+  $out .= '</tbody></table></div>';
+  return $out; 
+}
+
+/**
+ * Callback for cancelled
+ */
+
+function attendance_cancelled($cid) {
+  global $user;
+  $user_id = $user->uid;
+  
+  
+  if ($user_id != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user_id))->fetchField();
+    $role_name = get_role_name($role_id);
+    if ($role_name != '') {
+      
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'attending' => 2,
+          'waiting' => 0, 
+        ))
+        ->condition('cid', $cid)
+        ->execute();
+
+      $nid = db_query('SELECT nid FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+      $delta = db_query('SELECT delta FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+      
+      update_cobook_tables($nid, $delta);
+      drupal_set_message('Framelding er gennemført');  
+      drupal_goto('manage/' . $nid . '/' . $delta);
+    } else {
+
+      $result2 = db_query('SELECT uid FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+      if ($result2 == $user_id) {
+        $query = db_update('cobook_attendance')
+          ->fields(array(
+            'attending' => 2,
+            'waiting' => 0, 
+          ))
+          ->condition('cid', $cid)
+          ->execute();
+ 
+        $nid = db_query('SELECT nid FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+        $delta = db_query('SELECT delta FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+        
+        update_cobook_tables($nid, $delta);
+        drupal_set_message('Framelding er gennemført');  
+        drupal_goto('attendee_list');
+      } else {
+        return '<p>Du har ikke adgang til denne side.</p>';
+      }
+    }
+  }
+  
+}  
+
+/**
+ * Callback for cancel
+ */
+function attendance_cancel($cid) {
+  global $user;
+  $user_id = $user->uid;
+  
+  if ($user_id != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user_id))->fetchField();
+    $role_name = get_role_name($role_id);
+    if ($role_name != '') {
+      $result = db_query('SELECT * FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid));
+
+      foreach ($result as $item) {
+        $name = $item->name;
+        $mobile = $item->mobile;
+        $phone = $item->phone;
+        $email = $item->email;
+        $nid = $item->nid;
+        $delta = $item->delta;
+  
+        if ($item->uid) {
+	  $result2 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item->uid));
+	  foreach ($result2 as $item2) {
+	    $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item2->uid))->fetchField();
+	    $phone = db_query('SELECT field_fixed_line_value FROM {field_data_field_fixed_line} WHERE entity_id = :uid', array(':uid' => $item2->uid))->fetchField();
+            $name = $item2->name;
+            $email = $item2->mail;
+	  }
+	}
+      
+        $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $item->nid))->fetchField();
+        $time = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta))->fetchField();   
+        $time2 = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta))->fetchField();   
+	$danishtime = create_timestring($time,$time2,TRUE);
+	$titlentime = $title . ' - ' . $danishtime;
+      
+        $out = '<div><p>&nbsp;<a href="/cancelled/' . $cid . '/' . '">Bekræft framelding.</a> Framelding kan ikke fortrydes. Følgende bliver frameldt: </p>';
+        $out .= '<table><thead><tr><th>Navn</th><th>Mobil</th><th>Fastnet</th><th>E-mail</th><th>Kursus</th></tr></thead>';
+	$out .= '<tbody><tr><td>' . $name . '</td><td>' . $mobile . '</td><td>' . $phone . '</td><td>' . $email . '</td><td>' . $titlentime . '</td></tr></tbody></table></div>';
+      } 
+      if (!isset($out)) drupal_goto('page_1'); 
+      return $out;
+    } else {
+
+      $result2 = db_query('SELECT uid FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+      if ($result2 == $user_id) {    
+        $result = db_query('SELECT nid FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+        $delta = db_query('SELECT delta FROM {cobook_attendance} WHERE cid = :cid', array(':cid' => $cid))->fetchField();
+        $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $result))->fetchField();
+        $time = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $result, ':delta' => $delta))->fetchField();   
+        $time2 = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $result, ':delta' => $delta))->fetchField();   
+	$danishtime = create_timestring($time,$time2,TRUE);
+        $titlentime = $title . ' - ' . $danishtime;
+        $out = '<div class="node"><p>Framelding kan ikke fortrydes.</p> <p><a href="/cancelled/' . $cid . '/' . '">Klik her for at bekræfte, at du framelder dig ' . $titlentime . '.</a></p></div>';
+        return $out; 
+      } else {
+        return '<p>Du har ikke adgang til denne side.</p>';
+      }
+      
+    }
+  }
+}
+ 
+/**
+ * List of attendees in courses.
+ * If user is authenticated user, the user's own enrollments are shown. 
+ * If user is personale or administrator, the total participation per course is shown.
+ */
+function attendee_list() {  
+  global $user;
+  $user_id = $user->uid;
+  $out = t('Log ind for at se tilmeldingslister.');
+  
+  if ($user_id != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user_id))->fetchField();
+    $role_name = get_role_name($role_id);
+    $type = 'kursus';
+    if ($role_name != '') {
+      $out = 'Denne side er kun for eksterne brugere med en konto.';
+    } 
+    else {
+      
+      // attendee
+      $out = '<table><tr><td><a href="javascript: window.print();">Udskriv</a></td></tr></table>';
+      $out .= '<div><table><tr><td><strong>Du er tilmeldt følgende kurser:</strong></td></tr></table>';
+      $out .= '<table><thead><tr><th>Kursus</th><th>Afbud</th></tr></thead><tbody>';
+      $number = 0;
+      $result = db_query('SELECT cid, nid, delta FROM {cobook_attendance} WHERE uid = :uid AND attending = 1', array(':uid' => $user_id));
+      $type = 'kursus';
+      foreach ($result as $item) {
+        $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        if ($category != '') {
+          $category = ' - ' . $category;
+        }  
+        $status = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta))->fetchField();
+        $number += 1;
+        $result2 = db_query('SELECT nid, title FROM {node} WHERE nid = :nid AND type = :type', array(':nid' => $item->nid, ':type' => $type));
+        foreach ($result2 as $item2) {
+          $result3 = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->nid, ':delta' => $item->delta))->fetchField();   
+          $result3b = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->nid, ':delta' => $item->delta))->fetchField();   
+          $timenow = time();
+          $phptime = create_timestamp($result3); 
+          if ($phptime >= $timenow) {
+            $danishtime = create_timestring($result3, $result3b,TRUE);
+	    if ($number % 2 == 0) {
+	      $out .= '<tr class="even">';
+	    }
+	    else {
+	      $out .= '<tr class="odd">';
+	    }  
+            if ($status == 'Aflyst') {
+              $out .= '<td>' . $item2->title . $category . ' - ' . $danishtime . ' - ' . $location . '</td><td>Aflyst</td></tr>';
+            } else {  
+              $out .= '<td>' . $item2->title . $category . ' - ' . $danishtime . ' - ' . $location . '</td><td><a href="/cancel/' . $item->cid . '">Meld afbud</a></td></tr>';
+            }  
+          }  
+        }  
+      }
+      $out .= '</tbody></table><p><br></p></div>';
+
+      // on wait list
+      $out .= '<div><table><tr><td><strong>Du er på venteliste til følgende kurser:</strong></td></tr></table>';
+      $out .= '<table><thead><tr><th>Kursus</th><th>Afbud</th></tr></thead><tbody>';
+      $number = 0;
+      $result = db_query('SELECT cid, nid, delta FROM {cobook_attendance} WHERE uid = :uid AND waiting > 0', array(':uid' => $user_id));
+      $type = 'kursus';
+      foreach ($result as $item) {
+        $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $status = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta))->fetchField();
+        $number += 1;
+        $result2 = db_query('SELECT nid, title FROM {node} WHERE nid = :nid AND type = :type', array(':nid' => $item->nid, ':type' => $type));
+        foreach ($result2 as $item2) {
+          $result3 = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->nid, ':delta' => $item->delta))->fetchField();   
+          $result3b = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item2->nid, ':delta' => $item->delta))->fetchField();   
+          $timenow = time();
+          $phptime = create_timestamp($result3);
+          if ($phptime >= $timenow) {
+            $danishtime = create_timestring($result3,$result3b,TRUE);
+	    if ($number % 2 == 0) {
+	      $out .= '<tr class="even">';
+	    }
+	    else {
+	      $out .= '<tr class="odd">';
+	    }  
+	    if ($status == 'Aflyst') {
+	      $out .= '<td>' . $item2->title . $category . ' - ' . $danishtime . ' - ' . $location . '</td><td>Aflyst</td></tr>';
+	    } else {  
+              $out .= '<td>' . $item2->title . $category . ' - ' . $danishtime . ' - ' . $location . '</td><td><a href="/cancel/' . $item->cid . '">Meld afbud</a></td></tr>';
+            }  
+          }  
+        }  
+      }
+      $out .= '</tbody></table></div><p></p>';
+      
+    }
+  } 
+  return $out;
+}  
+
+function do_link($value) {
+  if ($value == '') {
+    return '_';
+  } else {
+    return $value;
+  }  
+}
+ 
+/**
+ * Callback for manage
+ */
+function manage_details($nid, $delta) {  
+  global $user;
+  $user_id = $user->uid;
+  $out = t('You are not allowed to access this page');
+  if (!$nid) {
+    return t('No results');
+  }
+  if ($user_id != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user_id))->fetchField();
+    $role_name = get_role_name($role_id);
+    $type = 'kursus';
+    if ($role_name != '') {
+      $out = '<div>';
+      
+      $result = db_query('SELECT nid, title FROM {node} WHERE type = :type AND nid = :nid', array(':type' => $type,':nid' => $nid));
+      foreach ($result as $item) {
+        $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        $teacher = db_query('SELECT field_teacher_value FROM {field_data_field_teacher} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        if ($category != '') {
+          $category = ' - ' . $category;
+        }  
+        $result2 = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta))->fetchField();   
+        $result2b = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta))->fetchField();   
+        $phptime = create_timestamp($result2);
+        $timenow = time();
+        $danishtime = create_timestring($result2,$result2b, TRUE);
+        $maxpart = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $maxwait = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $out .= '<table><tr><td>';
+
+        $status = db_query('SELECT Status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))-> fetchField();
+        if ($status == 'Aflyst') {
+  	  $out .= '<a href="/undo/' . $item->nid . '/' . $delta . '">Fortryd aflysning af kurset</a>&nbsp;&nbsp;-&nbsp;&nbsp;';
+  	} else {  
+	  $out .= '<a href="/cancellation/' . $item->nid . '/' . $delta . '">Aflys kurset</a>&nbsp;&nbsp;-&nbsp;&nbsp;';
+	}  
+	if ($role_name != 'personale') {
+	  $out .= '<a href="/copy/' . $item->nid . '">Kopiér kursus</a>&nbsp;&nbsp;-&nbsp;&nbsp;';
+	}  
+	$out .= '<a href="/msg_batch/' . $item->nid . '/' . $delta . '">Send beskeder</a>&nbsp;&nbsp;-&nbsp;&nbsp;<a href="javascript: window.print();">Udskriv</a></td></tr></table>';
+	$out .= '<table><tr><td><strong>' . $item->title . $category . ' - ' . $danishtime . ' - ' . $location . '&nbsp;&nbsp;</strong></td>';
+	if ($teacher != '') {
+  	  $out .= '<td>Underviser: ' . $teacher . '</td>';
+	}
+	$out .= '<td>Højst ' . $maxpart . ' deltagere, højst ' . $maxwait . ' på venteliste</td>';
+	if ($phptime < $timenow) {
+          $act_att = db_query('SELECT actual_attendees FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))-> fetchField();
+	  $out .= '<td><a href="/act_attendees/' . $nid . '/' . $delta . '">Faktisk antal deltagere</a>: ' . $act_att . '</td>';
+        }
+	$out .= '</tr></table>';
+
+        // attendees
+        $out .= '<table><thead><tr><th></th><th>Navn</th><th>Mobil</th><th>Fastnet</th><th>E-mail</th><th>Framelding</th></tr></thead><tbody>';
+	$result3 = db_query('SELECT cid, uid, name, mobile, phone, email FROM {cobook_attendance} WHERE attending = 1 AND nid = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta));
+	$number = 0;
+	foreach ($result3 as $item3) {
+	  $ed_link = TRUE;
+	  $number += 1;
+	  $name = $item3->name;
+	  $mobile = $item3->mobile;
+	  $phone = $item3->phone;
+	  $email = $item3->email;
+	  if ($item3->uid) {
+	    $ed_link = FALSE;
+	    $result4 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item3->uid));
+	    foreach ($result4 as $item4) {
+	      $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+	      $phone = db_query('SELECT field_fixed_line_value FROM {field_data_field_fixed_line} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+  	      $name = $item4->name;
+  	      $email = $item4->mail;
+	    }
+	  }
+	  if ($number % 2 == 0) {
+	    $out .= '<tr class="even">';
+	  }
+	  else {
+	    $out .= '<tr class="odd">';
+	  }  
+	  if ($ed_link == TRUE) {
+	    $out .= '<td>' . $number . '</td><td><a href="/edit_details/name/' . $item3->cid . '/' . $name . '">' . do_link($name) . '</a></td><td><a href="/edit_details/mobile/' . $item3->cid . '/' . $mobile . '">' . do_link($mobile) . '</a></td><td><a href="/edit_details/phone/' . $item3->cid . '/' . $phone . '">' . do_link($phone) . '</a></td><td><a href="/edit_details/email/' . $item3->cid . '/' . $email . '">' . do_link($email) . '</a></td><td><a href="/cancel/' . $item3->cid . '">Frameld</a></td></tr>';
+	  } else {
+	    $out .= '<td>' . $number . '</td><td>' . $name . '</td><td>' . $mobile . '</td><td>' . $phone . '</td><td>' . $email . '</td><td><a href="/cancel/' . $item3->cid . '">Frameld</a></td></tr>';
+	  }
+	} 
+
+	// wait list
+	$out .= '<tr class="odd"><td colspan="6">Venteliste:</td><tr>';
+	$result3 = db_query('SELECT cid, uid, name, mobile, phone, email, waiting FROM {cobook_attendance} WHERE waiting > 0 AND delta = :delta AND nid = :nid ORDER BY waiting', array(':nid' => $item->nid, ':delta' => $delta));
+	$number = 0;
+	foreach ($result3 as $item3) {
+	  $ed_link = TRUE;
+	  $number += 1;
+	  $name = $item3->name;
+	  $mobile = $item3->mobile;
+	  $phone = $item3->phone;
+	  $email = $item3->email;
+	  if ($item3->uid) {
+	    $ed_link = FALSE;
+	    $result4 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item3->uid));
+	    foreach ($result4 as $item4) {
+	      $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+	      $phone = db_query('SELECT field_fixed_line_value FROM {field_data_field_fixed_line} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+  	      $name = $item4->name;
+  	      $email = $item4->mail;
+	    }
+	  }
+	  if ($number % 2 == 0) {
+	    $out .= '<tr class="even">';
+	  }
+	  else {
+	    $out .= '<tr class="odd">';
+	  }  
+	  if ($ed_link == TRUE) {
+	    $out .= '<td>' . $number . '</td><td><a href="/edit_details/name/' . $item3->cid . '/' . $name . '">' . do_link($name) . '</a></td><td><a href="/edit_details/mobile/' . $item3->cid . '/' . $mobile . '">' . do_link($mobile) . '</a></td><td><a href="/edit_details/phone/' . $item3->cid . '/' . $phone . '">' . do_link($phone) . '</a></td><td><a href="/edit_details/email/' . $item3->cid . '/' . $email . '">' . do_link($email) . '</a></td><td><a href="/cancel/' . $item3->cid . '">Frameld</a></td></tr>';
+	  } else {  
+	    $out .= '<td>' . $number . '</td><td>' . $name . '</td><td>' . $mobile . '</td><td>' . $phone . '</td><td>' . $email . '</td><td><a href="/cancel/' . $item3->cid . '">Frameld</a></td></tr>';
+	  }  
+	}
+
+	$out .= '</tbody></table><p><br></p>';
+      }
+
+      $out .= '</div>';
+    } 
+  } else
+  {
+    $out = t('You are not allowed to access this page');
+  }
+  return $out;
+}  
+  
+/**
+ * Create_timestamp is used to convert date-and-time values from the db to a timestamp.
+ */
+function  create_timestamp($db_date) {
+  $hour = substr($db_date,11,2);
+  $minute = substr($db_date,14,2);
+  $second = 0;
+  $month = substr($db_date,5,2);
+  $day = substr($db_date,8,2);
+  $year = substr($db_date,0,4);
+  $timestamp = mktime($hour, $minute, $second, $month, $day, $year);
+  return $timestamp;
+}
+
+/**
+ * Called from the link attendance
+ * From here the users are sent to different pages 
+ */
+// Delta is added 
+function _update_attendance($nodeid, $delta) {
+  //delta has been added
+  if ((!isset($nodeid)) || (!isset($delta))) {
+    drupal_goto('page_1');
+  }
+  update_cobook_tables($nodeid, $delta);
+  global $user;
+  $userid = $user->uid;
+  $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $nodeid))->fetchField();
+  $firsttime = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nodeid, ':delta' => $delta))->fetchField();
+  $nexttime = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nodeid, ':delta' => $delta))->fetchField();
+  $phptime = create_timestamp($firsttime);
+  $timenow = time();
+  if ($timenow > $phptime) {
+    $out = '<p>Det er for sent at tilmelde sig.</p>';
+    return $out;
+  }  
+  $danishtime = create_timestring($firsttime,$nexttime,TRUE);
+  $title_n_time = $title . ' - ' . $danishtime;
+  if ($userid == 0) {
+    $out = '<p>Du skal logge ind, hvis du vil tilmelde dig online.<p>Hvis du ingen konto har, skal du oprette &eacute;n.<p>Når du opretter kontoen, behøver du ikke oplyse andet end din e-mailadresse og et brugernavn efter eget valg.<p>'; // (1)
+  }
+  else
+  {
+    $roleid = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user->uid))->fetchField();
+    $rolename = get_role_name($roleid);
+    $out = '<p>Dit bruger-id er ' . $userid . '. Din rolle er ' . $rolename . '.</p>' ; 
+    if ($rolename != '') {
+      $att = check_status($nodeid, $delta);
+      if ($att == 'Ledige pladser') {
+        $header = 'Tilmeld deltager - ' . $title_n_time;
+        $attending = 1;
+        $waitlist = 0;
+        $buttontext = t('Register');
+        return drupal_get_form('insert_atten_form',$title_n_time,$nodeid,$delta,$attending,$waitlist,$buttontext,$header); // (4)
+      }
+      if ($att == 'Plads på venteliste') {
+        $header = 'Optagelse på venteliste - ' . $title_n_time;
+        $attending = 0;
+        $waitvalue = db_query('SELECT MAX(waiting) FROM {cobook_attendance} WHERE nid = :nid', array(':nid' => $nodeid))->fetchField();
+        $waitlist = $waitvalue + 1;
+        $buttontext = t('Add to wait list');
+        return drupal_get_form('insert_atten_form',$title_n_time,$nodeid,$delta,$attending,$waitlist,$buttontext,$header); // (5)
+      }
+      if ($att == 'Optaget') {
+        drupal_set_message(t('Der er hverken ledige pladser eller plads på venteliste.'), 'error');
+        return '<p class="node">Der er hverken ledige pladser eller plads på venteliste.</p>'; // (6)
+      }
+      if ($att == 'Aflyst') {
+        drupal_set_message(t('Kurset er aflyst.'), 'error');
+        return '<p class="node">Kurset er aflyst.</p>'; // (6)
+      }
+      
+    }
+    if ($rolename == '') {
+      $att = check_status($nodeid, $delta);
+      $user_status = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE attending = 1 AND nid = :nid AND uid = :uid AND delta = :delta', array(':nid' => $nodeid,':uid' => $userid, ':delta' => $delta))->fetchField();
+      if ($user_status > 0) {
+        return t('You are already registered for this course.');
+      }
+      $user_status = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE waiting > 0 AND nid = :nid AND uid = :uid AND delta = :delta', array(':nid' => $nodeid,':uid' => $userid, ':delta' => $delta))->fetchField();
+      if ($user_status > 0) {
+        return t('You are already on the waiting list for this course.');
+      }
+      if ($att == 'Ledige pladser') {
+        $header = 'Tilmeld deltager - ' . $title_n_time;
+        $attending = 1;
+        $waitlist = 0;
+        $buttontext = t('I want to register myself');
+        return drupal_get_form('insert_authenticated_user_form',$title_n_time,$nodeid,$delta,$attending,$waitlist,$buttontext,$userid,$header); // (7)
+      }
+      if ($att == 'Plads på venteliste') {
+        $header = 'Optagelse på venteliste - ' . $title_n_time;
+        $attending = 0;
+        $waitvalue = db_query('SELECT MAX(waiting) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta', array(':nid' => $nodeid, ':delta' => $delta))->fetchField();
+        $waitlist = $waitvalue + 1;
+        $buttontext = t('I register myself on wait list');
+        return drupal_get_form('insert_authenticated_user_form',$title_n_time,$nodeid,$delta,$attending,$waitlist,$buttontext,$userid,$header); // (8)
+      }
+      if ($att == 'Optaget') {
+        return '<p class="node">Der er hverken ledige pladser eller plads på venteliste.</p>'; // (9)
+      }
+      if ($att == 'Aflyst') {
+        drupal_set_message(t('Kurset er aflyst.'), 'error');
+        return '<p class="node">Kurset er aflyst.</p>'; // (6)
+      }
+          
+    }
+        
+  }  
+  return $out;
+  
+}
+
+function standard_header($nid, $delta) {
+  $title = db_query('SELECT title FROM {node} WHERE nid = :nid', array(':nid' => $nid))->fetchField();
+  $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  $result2 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta));   
+  foreach ($result2 as $row2) {
+    $timelisting = create_timestring($row2->field_time_value, $row2->field_time_value2, FALSE) . ' på ' . $location; 
+  }
+  $header = '"' . $title . '" ' . $timelisting;
+  return $header;
+}
+
+/**
+ * Callback for act_attendees
+ */
+function act_attendees($nid, $delta) {
+  $header = standard_header($nid, $delta);
+
+  return drupal_get_form('act_attendees_form', $nid, $delta, $header);
+}
+
+/**
+ * Define a form where you can edit details of attendees
+ */
+function edit_details_form($form, $form_state, $column, $cid, $value = '') {
+   $form['header'] = array(
+     '#prefix' => '<strong>',
+     '#markup' => t('Edit') ,
+     '#suffix' => '</strong>',
+   );
+   $form['column'] = array(
+     '#type' => 'value',
+     '#value' => $column,
+   );
+   $form['cid'] = array(
+     '#type' => 'value',
+     '#value' => $cid,
+   );
+   $form['value'] = array(
+     '#type' => 'textfield',
+     '#default_value' => $value,
+   );
+   $form['submit'] = array(
+     '#type' => 'submit',
+     '#value' => t('Save'),
+   );
+   return $form; 
+
+}
+
+function edit_details_form_validate($form, $form_state) {
+
+}
+
+function edit_details_form_submit($form, &$form_state) {
+  switch($form_state['values']['column']) {
+    case 'name':
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'name' => $form_state['values']['value'],
+        ))
+        ->condition('cid', $form_state['values']['cid'])
+        ->execute();
+      break;
+    case 'mobile':
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'mobile' => $form_state['values']['value'],
+        ))
+        ->condition('cid', $form_state['values']['cid'])
+        ->execute();
+      break;
+    case 'email':
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'email' => $form_state['values']['value'],
+        ))
+        ->condition('cid', $form_state['values']['cid'])
+        ->execute();
+      break;
+    case 'phone':
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'phone' => $form_state['values']['value'],
+        ))
+        ->condition('cid', $form_state['values']['cid'])
+        ->execute();
+  }    
+  $result = db_query('SELECT nid, delta FROM {cobook_attendance} WHERE (attending = 1 OR waiting > 0) AND cid = :cid', array(':cid' => $form_state['values']['cid'])); 
+  foreach ($result as $item) {
+    $form_state['redirect'] = '/manage/' . $item->nid . '/' . $item->delta;
+  }
+}
+
+/**
+ * Define a form where you can enter actual number of attendees
+ */
+function act_attendees_form($form, $form_state, $nid, $delta, $header) {
+   $form['event'] = array(
+     '#prefix' => '<strong>',
+     '#markup' => $header,
+     '#suffix' => '</strong>',
+   );
+   $form['nid'] = array(
+     '#type' => 'value',
+     '#value' => $nid,
+   );
+   $form['delta'] = array(
+     '#type' => 'value',
+     '#value' => $delta,
+   );
+   $form['act_att'] = array(
+     '#title' => t('Actual number of attendees'),
+     '#type' => 'textfield',
+     '#required' => TRUE,
+     '#description' => t('Actual number of attendees'),
+   );
+   $form['submit'] = array(
+     '#type' => 'submit',
+     '#value' => t('Save'),
+   );
+   return $form; 
+}
+
+function act_attendees_form_validate($form, &$form_state) {
+  if (!is_numeric($form_state['values']['act_att'])) {
+    form_set_error('act_att', t('Actual number of attendees must be an integer'));
+  }
+}
+
+function act_attendees_form_submit($form, &$form_state) {
+  $row_exists = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $form_state['values']['nid'], ':delta' => $form_state['values']['delta']))->fetchField();
+  if ($row_exists) {
+    $query = db_update('cobook_status')
+      ->fields(array(
+        'actual_attendees' => $form_state['values']['act_att'],
+      ))
+      ->condition('nid', $form_state['values']['nid'])
+      ->condition('delta', $form_state['values']['delta'])
+      ->execute();
+  } 
+  else
+  {
+    $query = db_insert('cobook_status') 
+      ->fields(array(
+       'actual_attendees' => $form_state['values']['act_att'],  
+       'nid' => $form_state['values']['nid'],
+       'delta' => $form_state['values']['delta'],
+       'reminders' => 0,
+       ))
+       ->execute();
+  }  
+  $form_state['redirect'] = '/manage/' . $form_state['values']['nid'] . '/' . $form_state['values']['delta'];
+
+}
+
+/**
+  * Define a form from where an administrator or personale can send a batch of sms messages and e-mails to the attendees of one event
+  */
+function send_msgs_form($form, $form_state, $header, $mail_adds, $mobile_numbers, $mail_adds2, $mobile_numbers2, $nid, $delta, $event_name) {
+   $form['event'] = array(
+     '#prefix' => '<strong>',
+     '#markup' => $header,
+     '#suffix' => '</strong>',
+   );
+   $form['mail_adds'] = array(
+     '#type' => 'value',
+     '#value' => $mail_adds,
+     '#required' => TRUE,
+   );
+   $form['mob_nos'] = array(
+     '#type' => 'value',
+     '#value' => $mobile_numbers,
+     '#required' => TRUE,
+   );
+   $form['mail_adds2'] = array(
+     '#type' => 'value',
+     '#value' => $mail_adds2,
+     '#required' => TRUE,
+   );
+   $form['mob_nos2'] = array(
+     '#type' => 'value',
+     '#value' => $mobile_numbers2,
+     '#required' => TRUE,
+   );
+   $form['nid'] = array(
+     '#type' => 'value',
+     '#value' => $nid,
+   );
+   $form['delta'] = array(
+     '#type' => 'value',
+     '#value' => $delta,
+   );
+   $form['subject'] = array(
+     '#title' => t('Mail subject'),
+     '#type' => 'textfield',
+     '#maxlength' => 256,
+     '#description' => t('Accept the text, change it, or replace it.'),
+     '#required' => TRUE,
+     '#default_value' => 'Aflysning',
+   );
+   $form['message'] = array(
+     '#title' => t('Mail message'),
+     '#type' => 'textarea',
+     '#rows' => 10,
+     '#cols' => 40,
+     '#required' => TRUE,
+     '#description' => t('Accept the text, change it, or replace it.'),
+     '#resizable' => FALSE,
+     '#default_value' => $event_name . " er desværre aflyst.\n\nMed venlig hilsen\nKøbenhavns Biblioteker",
+   );
+   $form['sms'] = array(
+     '#title' => t('SMS message'),
+     '#type' => 'textfield',
+     '#required' => TRUE,
+     '#size' => 160,
+     '#description' => t('Accept the text, change it, or replace it. You can add no more than 160 characters.'),
+     '#maxlength' => 160,
+     '#resizable' => FALSE,
+     '#default_value' => $event_name . ' er desværre aflyst.',
+   );
+   $form['attendees'] = array(
+    '#type' => 'checkbox', 
+    '#title' => t('Send til dem, der er tilmeldt.'),
+    '#default_value' => 1, 
+   );
+   $form['wait_list'] = array(
+    '#type' => 'checkbox', 
+    '#title' => t('Send til dem, der er på venteliste.'),
+    '#default_value' => 1, 
+   );
+   $form['submit'] = array(
+     '#type' => 'submit',
+     '#value' => t('Submit')
+   );
+   return $form;
+}
+
+/**
+ * Validate the form where you can send a batch of sms messages and e-mails
+ */
+ function send_msgs_form_validate($form,&$form_state) {
+   if ($form_state['values']['message'] == '') {
+   }
+ }
+
+/**
+ * Submit the form where one can send a batch of sms messages and e-mails 
+ */
+ function send_msgs_form_submit($form,&$form_state) {
+  $module = 'cobook';
+  $key = 'batch';
+  $language = language_default();
+  $param['message'] = $form_state['values']['message'];
+  $param['subject'] = $form_state['values']['subject'];
+  $emails = $form_state['values']['mail_adds'];
+  $emails2 = $form_state['values']['mail_adds2'];
+  $mobiles = $form_state['values']['mob_nos'];
+  $mobiles2 = $form_state['values']['mob_nos2'];
+  $sms = $form_state['values']['sms'];
+  if ($form_state['values']['attendees'] == 1) {
+    foreach ($emails as $email) {
+      if ($email) {   
+        drupal_mail($module, $key, $email, $language, $param);  
+        watchdog('E-mail', 'Ad hoc-meddelelse til ' . $email);
+      }  
+    }
+  }  
+  if ($form_state['values']['wait_list'] == 1) {
+    foreach ($emails2 as $email) {
+      if ($email) {   
+        drupal_mail($module, $key, $email, $language, $param);  
+        watchdog('E-mail', 'Ad hoc-meddelelse til ' . $email);
+      }  
+    }
+  }  
+  $count = 0;
+  if ($form_state['values']['attendees'] == 1) {
+    foreach ($mobiles as $mobile) {
+      if (strlen($mobile) == 8) {   
+        $count += 1;
+        $short_msg = 'http://smssys.dk/?countrycode=45&charset=UTF-8&number=' . $mobile . '&message=' . $sms . '&user=kkb2&pass=2895';
+        $short_msg = str_ireplace(' ', '+', $short_msg);
+        $result = fopen($short_msg, "r");           
+        watchdog('SMS', 'Ad hoc-meddelelse til ' . $mobile);
+      }  
+    } 
+  }  
+  if ($form_state['values']['wait_list'] == 1) {
+    foreach ($mobiles2 as $mobile) {
+      if (strlen($mobile) == 8) {   
+        $count += 1;
+        $short_msg = 'http://smssys.dk/?countrycode=45&charset=UTF-8&number=' . $mobile . '&message=' . $sms . '&user=kkb2&pass=2895';
+        $short_msg = str_ireplace(' ', '+', $short_msg);
+        $result = fopen($short_msg, "r");           
+        watchdog('SMS', 'Ad hoc-meddelelse til ' . $mobile);
+      }  
+    }
+  }  
+  
+  drupal_set_message(t('Du har sendt en sms eller e-mail til tilmeldte med mobilnummer eller mailadresse.'));
+  $form_state['redirect'] = '/manage/' . $form_state['values']['nid'] . '/' . $form_state['values']['delta'];
+     
+ }
+
+/**
+ * Define a form where a Drupal user can register himself for a course
+ */
+ function insert_authenticated_user_form($form, $form_state, $title, $node_id,$delta, $attending,$waitlist,$buttontext,$user_id,$header) {
+   $form['event'] = array(
+     '#prefix' => '<h2>',
+     '#markup' => $header,
+     '#suffix' => '</h2>',
+   );
+   $form['space1'] = array(
+     '#prefix' => '<p>',
+     '#markup' => t('Click the button, and you have registered.'),
+     '#suffix' => '</p>',
+   );
+   $form['user-id'] = array(
+     '#type' => 'value',
+     '#value' => $user_id,
+   );
+   $form['node-id'] = array(
+     '#type' => 'value',
+     '#value' => $node_id,
+   );
+   $form['delta'] = array(
+     '#type' => 'value',
+     '#value' => $delta,
+   );
+   $form['the_event'] = array(
+     '#type' => 'value',
+     '#value' => $title,
+   );
+   $form['attending'] = array(
+     '#type' => 'value',
+     '#value' => $attending,
+   );
+   $form['waiting'] = array(
+     '#type' => 'value',
+     '#value' => $waitlist,
+   );
+   $form['submit'] = array(
+     '#type' => 'submit',
+     '#value' => $buttontext,
+   );
+   $form['space2'] = array(
+     '#prefix' => '<p>',
+     '#markup' => '',
+     '#suffix' => '</p>',
+   );
+   return $form;
+ }
+
+/**
+ * Validate the form where a Drupal user can register himself
+ */
+ function insert_authenticated_user_form_validate($form,&$form_state) {
+   if ($form_state['values']['user-id'] == '') {
+   }
+ }
+
+
+/**
+ * Submit the form where a Drupal user can register himself to a course
+ */
+ function insert_authenticated_user_form_submit($form,&$form_state) {
+   //The following commands insert the record in the cobook_attendance table
+   $table = 'cobook_attendance';
+   $record = new stdClass();
+   $record->nid = $form_state['values']['node-id'];
+   $record->delta = $form_state['values']['delta'];
+   $record->attending = $form_state['values']['attending'];
+   $record->waiting = $form_state['values']['waiting'];
+   $record->uid = $form_state['values']['user-id'];
+   drupal_write_record($table, $record); 
+   
+   update_cobook_tables($form_state['values']['node-id'],$form_state['values']['delta'] );
+  
+   // Tjek om brugeren har andre tilmeldinger med tidsmæssig overlapning
+   // Check if the user has other attendances at the same time
+   $times = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $form_state['values']['node-id'], ':delta' => $form_state['values']['delta']));
+   foreach ($times as $time) {
+     $time1 = $time->field_time_value; 
+     $time2 = $time->field_time_value2; 
+   }  
+   $result = db_query('SELECT nid, delta FROM {cobook_attendance} WHERE uid = :uid AND attending < 2', array(':uid' => $form_state['values']['user-id'])); 
+   $double = FALSE;
+   foreach ($result as $item) {
+     if (($item->nid <> $form_state['values']['node-id']) || ($item->delta <> $form_state['values']['delta'])) {
+       $times = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $item->delta));
+       foreach ($times as $time) {
+         if (($time1 > $time->field_time_value) && ($time1 < $time->field_time_value2)) $double = TRUE;
+         if (($time2 > $time->field_time_value) && ($time2 < $time->field_time_value2)) $double = TRUE;
+         if (($time1 <= $time->field_time_value) && ($time2 >= $time->field_time_value2)) $double = TRUE;
+         if (($time1 >= $time->field_time_value) && ($time2 <= $time->field_time_value2)) $double = TRUE;
+       }
+     }  
+   }
+   if ($double == TRUE) {
+     drupal_set_message(t('Din tilmelding ligger samtidig med et andet kursus eller en venteliste, du allerede er tilmeldt.'), 'warning');
+   }  
+
+   $event = $form_state['values']['the_event'];
+   if ($form_state['values']['waiting'] > 0) {
+     drupal_set_message(t('You have registered to the wait list for %event.', array('%event' => $event)),'warning');
+   }
+   else {
+     drupal_set_message(t('You have registered yourself to %event.', array('%event' => $event)));
+   }
+   
+   // return the front_page
+   $form_state['redirect'] = '';
+     
+ }
+
+/**
+ * Define a form where an administrator registers an attendee
+ */
+ function insert_atten_form($form, $form_state, $title, $node_id,$delta, $attending,$waitlist,$buttontext,$header) {
+   $form['event'] = array(
+     '#prefix' => '<h2>',
+     '#markup' => $header,
+     '#suffix' => '</h2>',
+   );
+   $form['help'] = array(
+     '#prefix' => '<p><strong><br>',
+     '#markup' => t('Udfyld mindst ét af felterne foruden deltagerens navn.'),
+     '#suffix' => '</strong></p>',
+   );
+   $form['user_name'] = array(
+     '#title' => t('Name of the attendee'),
+     '#type' => 'textfield',
+     '#required' => TRUE,
+     '#description' => t('Please enter the name of the attendee.'),
+   );
+   $form['mobile'] = array(
+     '#title' => t('Mobile number'),
+     '#type' => 'textfield',
+     '#description' => t("The attendee's mobile number"),
+   );
+   $form['e-mail'] = array(
+     '#title' => t('E-mail address'),
+     '#type' => 'textfield',
+     '#description' => t("The attendee's  e-mail address"),
+   );
+   $form['fixed-line'] = array(
+     '#title' => t('Fixed-line number'),
+     '#type' => 'textfield',
+     '#description' => t("The attendee's  fixed-line number"),
+   );
+   $form['node-id'] = array(
+     '#type' => 'value',
+     '#value' => $node_id,
+   );
+   $form['delta'] = array(
+     '#type' => 'value',
+     '#value' => $delta,
+   );
+   $form['the_event'] = array(
+     '#type' => 'value',
+     '#value' => $title,
+   );
+   $form['attending'] = array(
+     '#type' => 'value',
+     '#value' => $attending,
+   );
+   $form['waiting'] = array(
+     '#type' => 'value',
+     '#value' => $waitlist,
+   );
+   $form['submit'] = array(
+     '#type' => 'submit',
+     '#value' => $buttontext,
+   );
+   return $form;
+ }
+
+
+/**
+ * Validate the form where an administrator registers an attendee
+ */
+ function insert_atten_form_validate($form,&$form_state) {
+   $value1 = trim($form_state['values']['mobile']);
+   $value2 = trim($form_state['values']['e-mail']);
+   $value3 = trim($form_state['values']['fixed-line']);
+   if ($value1 == '' && $value2 == '' && $value3 == '') {
+     form_set_error('insert_atten_form', t('Du skal udfylde endnu et felt.'));
+     
+   }
+ }
+
+
+/**
+ * Submit the form where an administrator registers an attendee
+ */
+ function insert_atten_form_submit($form,&$form_state) {
+   //The following commands insert the record in the cobook table
+   $table = 'cobook_attendance';
+   $record = new stdClass();
+   $record->nid = $form_state['values']['node-id'];
+   $record->delta = $form_state['values']['delta'];
+   $record->attending = $form_state['values']['attending'];
+   $record->waiting = $form_state['values']['waiting'];
+   $record->name = $form_state['values']['user_name'];
+   $record->mobile = $form_state['values']['mobile'];
+   $record->phone = $form_state['values']['fixed-line'];
+   $record->email = $form_state['values']['e-mail'];
+   drupal_write_record($table, $record); 
+   // delta should be added
+   update_cobook_tables($form_state['values']['node-id'],$form_state['values']['delta']);
+   
+   $name = $form_state['values']['user_name'];
+   $event = $form_state['values']['the_event'];
+   if ($form_state['values']['waiting'] > 0) {
+     drupal_set_message( t('You have added %name to the wait list of %event.', array('%name' => $name, '%event' => $event)), 'warning');  
+   }
+   else {
+     drupal_set_message(t('You have added the attendee %name to %event.', array('%name' => $name, '%event' => $event)));
+   }  
+   $form_state['redirect'] = '';
+     
+ }
+
+/**
+ * Check the status values for an event.
+ */
+function check_status($nid, $delta) {
+
+  $status = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))->fetchField();
+  
+  if ($status != 'Aflyst') {
+  
+    $status = 'Ledige pladser';
+
+    $participants = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND attending = 1', array(':nid' => $nid, ':delta' => $delta))->fetchField();
+
+    $waiting = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND waiting > 0', array(':nid' => $nid, ':delta' => $delta))->fetchField();
+
+    $maxpart = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+    $maxwait = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+
+    if ($maxpart > $participants) {
+      $status = 'Ledige pladser';
+    }  
+    else    
+    if ($maxwait > $waiting) {
+      $status = 'Plads på venteliste';
+    }  
+    else
+    $status = 'Optaget';
+  }  
+ 
+  return $status;
+}
+
+/**
+ * Tjekker om kursus ligger i fremtiden (senere end nu)
+ */
+ function _future($nid, $delta) {
+   $start_time = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))->fetchField();
+   $stamp1 = create_timestamp($start_time);
+   if ($stamp1 > time()) { 
+     return TRUE;
+   } else {
+     return FALSE;
+   }  
+ }
+
+/**
+ * Update status to be displayed in links in front-page event list. 
+ * Det er her også her, der bliver fremrykket fra venteliste.
+ */
+//delta has been added 
+function update_cobook_tables($c_id, $delta) {
+
+  $participants = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND attending = 1', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+  $waiting = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND waiting > 0', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+
+  $maxpart = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $c_id))->fetchField();
+  $maxwait = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $c_id))->fetchField();
+         
+  $status = db_query('SELECT Status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $c_id, ':delta' => $delta))-> fetchField();
+
+  //Der skal ikke fremrykkes fra venteliste, hvis kurset allerede er påbegyndt eller afholdt. Find derfor kursets starttid, og sammenlign den med nu.
+  //$start_time = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE nid = :nid AND delta = :delta', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+  //Konvertér $start_time til UNIX timestamp, og sammenlign
+  //$stamp1 = create_timestamp($start_time);
+  //if ($stamp1 > time()) { 
+  if (_future($c_id, $delta)) {
+    while (($maxpart > $participants) && ($waiting > 0)) {
+      //Move from wait list to attendance
+      $min_waiting = db_query('SELECT MIN(waiting) FROM {cobook_attendance} WHERE waiting > 0 AND nid = :nid AND delta = :delta', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+      $which = db_query('SELECT cid FROM {cobook_attendance} WHERE waiting = :waiting AND nid = :nid AND delta = :delta', array(':waiting' => $min_waiting, ':nid' => $c_id, ':delta' => $delta))->fetchField();
+    
+      $query = db_update('cobook_attendance')
+        ->fields(array(
+          'attending' => 1,
+          'waiting' => 0, 
+        ))
+        ->condition('cid', $which)
+        ->execute();
+
+      if ($status != 'Aflyst') {  
+        send_notification($which);
+      }  
+
+      $participants = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND attending = 1', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+      $waiting = db_query('SELECT Count(*) FROM {cobook_attendance} WHERE nid = :nid AND delta = :delta AND waiting > 0', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+
+      $maxpart = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $c_id))->fetchField();
+      $maxwait = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $c_id))->fetchField();  
+    }
+  }       
+ 
+  if ($status != 'Aflyst') {  
+    if ($maxpart > $participants) {
+      $link = 'Ledige pladser';
+    }  
+    else    
+    if ($maxwait > $waiting) {
+      $link = 'Plads på venteliste';
+    }  
+    else
+    $link = 'Optaget';
+  
+    $row_exists = db_query('SELECT status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $c_id, ':delta' => $delta))->fetchField();
+  
+    if ($row_exists) {
+      $query = db_update('cobook_status')
+        ->fields(array(
+          'status' => $link,
+        ))
+        ->condition('nid', $c_id)
+        ->condition('delta', $delta)
+        ->execute();
+    } 
+    else
+    {
+      $query = db_insert('cobook_status') 
+        ->fields(array(
+         'status' => $link,  
+         'nid' => $c_id,
+         'delta' => $delta,
+         'reminders' => 0,
+         ))
+         ->execute();
+    }
+    
+    // Helping views to show new values
+    // $cid = 'field:node:' . $c_id;
+    // cache_clear_all($cid, 'cache_field');
+  }
+}
+
+
+/**
+ * Implementation of hook_views_data().
+ * Exposes the status value of the cobook_status table to views.
+ */
+function cobook_views_data() {
+  //  $data['cobook_status']['table'] describes properties (not content) 
+  //  of the actual table.
+  
+  // The 'group' index will be used as a prefix in the UI for any of this
+  // table's fields, sort criteria, etc. so it's easy to tell where they came from.
+  $data['cobook_status']['table']['group'] = t('Cobook Status table');
+
+  // The cobook_status table is here defined as a base table that can be described in itself by
+  // views and not just be used in a relationship. 
+  $data['cobook_status']['table']['base'] = array(
+    'field' => 'nid', // This is the identifier field for the view. 
+    'title' => t('Cobook Status table'), 
+    'help' => t('Cobook Status table contains event status and can be related to nodes.'), 
+    'weight' => -10,
+  );
+
+  // The cobook_status table references the {node} table. The declaration below creates an
+  // 'implicit' relationship to the node table, so that when 'node' is the base
+  // table, the fields are automatically available.
+  $data['cobook_status']['table']['join'] = array(
+    // 'left_field' is the primary key in the referenced table.
+    // 'field' is the foreign key in this table.
+    'node' => array(
+      'left_field' => 'nid', 
+      'field' => 'nid',
+    ),
+  );
+
+  // Each field in the cobook_status table is described to Views.
+  // Node ID table field.
+  $data['cobook_status']['nid'] = array(
+    'title' => t('Node id'), 
+    'help' => t('Status content references a node.'),
+    // Define a relationship to the {node} table, so example_table views can
+    // add a relationship to nodes. If you want to define a relationship the
+    // other direction, use hook_views_data_alter(), or use the 'implicit' join
+    // method described above. 
+    // As it is inactive this relationship should perhaps be deleted.
+    'relationship' => array(
+      'base' => 'node', // The name of the table to join with. 
+      'base field' => 'nid', // The name of the field on the joined table.
+      // 'field' => 'nid' -- see hook_views_data_alter(); not needed here. 
+      'handler' => 'views_handler_relationship', 
+      'label' => t('Default label for the relationship'), 
+      'title' => t('Title shown when adding the relationship'), 
+      'help' => t('More information on this relationship'),
+    ),
+  );
+  // The status text field.
+  $data['cobook_status']['status'] = array(
+    'title' => t('Status text field'), 
+    'help' => t('Status of vacancy'), 
+    'field' => array(
+      'handler' => 'views_handler_field', 
+      'click sortable' => TRUE, // This is use by the table display plugin.
+    ), 
+    'sort' => array(
+      'handler' => 'views_handler_sort',
+    ), 
+    'filter' => array(
+      'handler' => 'views_handler_filter_string',
+    ), 
+    'argument' => array(
+      'handler' => 'views_handler_argument_string',
+    ),
+  );
+
+  return $data;
+} 
+
+function display_node_for_download($nid, $delta) {
+  update_cobook_tables($nid, $delta);
+  $status = check_status($nid, $delta);
+  $node = node_load($nid);
+  $result = db_query('SELECT field_type_value FROM {field_data_field_type} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+  $result2 = db_query('SELECT body_value, body_format, body_summary FROM {field_data_body} WHERE entity_id = :nid', array(':nid' => $nid));
+  $result5 = db_query('SELECT field_time_value, field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta));
+  $result6 = db_query('SELECT field_location_value FROM {field_data_field_location } WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  $result7 = db_query('SELECT field_picture_fid FROM {field_data_field_picture} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField();
+  $result8 = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+  if ($result7 != '') {
+    $picture = file_load($result7);
+  }  
+  $out = '<h1 class="title" id="page-title">' . $node->title .  '</h1>';
+  $out .= '<div class="node"><h3>' . $node->title .  '</h3>';
+  
+  global $user;
+  $waiting = db_query('SELECT waiting FROM {cobook_attendance} WHERE attending = 0 AND waiting > 0 AND uid = :uid AND nid = :nid AND delta = :delta', array(':uid' => $user->uid, ':nid' => $nid, ':delta' => $delta))->fetchField();
+  $attending = db_query('SELECT attending FROM {cobook_attendance} WHERE attending = 1 AND uid = :uid AND nid = :nid AND delta = :delta', array(':uid' => $user->uid, ':nid' => $nid, ':delta' => $delta))->fetchField();
+  $text = '';
+  if (isset($waiting)) {
+    if ($waiting > 0) {
+      $text = 'Du er på venteliste.';  
+    }
+  }  
+  if (isset($attending)) {
+    if ($attending == 1) {
+      $text = 'Du er tilmeldt.';
+    }
+  }  
+  foreach ($result2 as $item2) {
+    $out .= '<p>' . $item2->body_value . '</p>';
+  }  
+  $out .= '<p>' . 'Kategori: ' . $result8 . '.</p>';
+  if (isset($picture->filename)) {
+    $out .= '<img src="/sites/default/files/' . $picture->filename . '">';
+  }  
+  foreach ($result5 as $item5) {
+    $timelisting = create_timestring($item5->field_time_value, $item5->field_time_value2, TRUE);
+    $out .= '<p>' . $timelisting . '</p>';
+  }  
+  $out .= '<p>' . 'Afholdes på ' . $result6 . '.</p>';
+  $out .= '<p>' . 'Kursets type: ' . $result . '</p>';
+  $out .= '</div>';
+  return $out;
+}
+
+/**
+ * Edited version of manage_details
+ */
+function display_details($nid, $delta) {  
+  global $user;
+  $user_id = $user->uid;
+  $out = t('You are not allowed to access this page');
+  if (!$nid) {
+    return t('No results');
+  }
+  if ($user_id != 0) { 
+    $role_id = db_query('SELECT rid FROM {users_roles} WHERE uid = :uid', array(':uid' => $user_id))->fetchField();
+    $role_name = get_role_name($role_id);
+    $type = 'kursus';
+    if ($role_name != '') {
+      $out = '<div>';
+      
+      $result = db_query('SELECT nid, title FROM {node} WHERE type = :type AND nid = :nid', array(':type' => $type,':nid' => $nid));
+      foreach ($result as $item) {
+        $location = db_query('SELECT field_location_value FROM {field_data_field_location} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        $teacher = db_query('SELECT field_teacher_value FROM {field_data_field_teacher} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        $category = db_query('SELECT field_category_value FROM {field_data_field_category} WHERE entity_id = :nid', array(':nid' => $nid))->fetchField(); 
+        if ($category != '') {
+          $category = ' - ' . $category;
+        }  
+        $result2 = db_query('SELECT field_time_value FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta))->fetchField();   
+        $result2b = db_query('SELECT field_time_value2 FROM {field_data_field_time} WHERE entity_id = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta))->fetchField();   
+        $phptime = create_timestamp($result2);
+        $timenow = time();
+        $danishtime = create_timestring($result2,$result2b, TRUE);
+        $maxpart = db_query('SELECT field_participants_value FROM {field_data_field_participants} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $maxwait = db_query('SELECT field_waiting_list_value FROM {field_data_field_waiting_list} WHERE entity_id = :nid', array(':nid' => $item->nid))->fetchField();
+        $status = db_query('SELECT Status FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))-> fetchField();
+	$out .= '<table><tr><td><strong>' . $item->title . $category . ' - ' . $danishtime . ' - ' . $location . '&nbsp;&nbsp;</strong></td>';
+	if ($teacher != '') {
+  	  $out .= '<td>Underviser: ' . $teacher . '</td>';
+	}
+	$out .= '<td>Højst ' . $maxpart . ' deltagere, højst ' . $maxwait . ' på venteliste</td>';
+	if ($phptime < $timenow) {
+          $act_att = db_query('SELECT actual_attendees FROM {cobook_status} WHERE nid = :nid AND delta = :delta', array(':nid' => $nid, ':delta' => $delta))-> fetchField();
+	  $out .= '<td>Faktisk antal deltagere: ' . $act_att . '</td>';
+        }
+	$out .= '</tr></table>';
+
+        // status
+        $out .= '<table><tr><td>Status: ' . $status . '</td></tr></table>';
+
+        // attendees
+        $out .= '<table><thead><tr><th></th><th>Navn</th><th>Mobil</th><th>Fastnet</th><th>E-mail</th><th>Framelding</th></tr></thead><tbody>';
+	$result3 = db_query('SELECT cid, uid, name, mobile, phone, email FROM {cobook_attendance} WHERE attending = 1 AND nid = :nid AND delta = :delta', array(':nid' => $item->nid, ':delta' => $delta));
+	$number = 0;
+	foreach ($result3 as $item3) {
+	  $ed_link = TRUE;
+	  $number += 1;
+	  $name = $item3->name;
+	  $mobile = $item3->mobile;
+	  $phone = $item3->phone;
+	  $email = $item3->email;
+	  if ($item3->uid) {
+	    $ed_link = FALSE;
+	    $result4 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item3->uid));
+	    foreach ($result4 as $item4) {
+	      $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+	      $phone = db_query('SELECT field_fixed_line_value FROM {field_data_field_fixed_line} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+  	      $name = $item4->name;
+  	      $email = $item4->mail;
+	    }
+	  }
+	  if ($number % 2 == 0) {
+	    $out .= '<tr class="even">';
+	  }
+	  else {
+	    $out .= '<tr class="odd">';
+	  }  
+	  if ($ed_link == TRUE) {
+	    $out .= '<td>' . $number . '</td><td>' . do_link($name) . '</td><td>' . do_link($mobile) . '</td><td>' . do_link($phone) . '</td><td>' . do_link($email) . '</td><td>Frameld</td></tr>';
+	  } else {
+	    $out .= '<td>' . $number . '</td><td>' . $name . '</td><td>' . $mobile . '</td><td>' . $phone . '</td><td>' . $email . '</td><td>Frameld</td></tr>';
+	  }
+	} 
+
+	// wait list
+	$out .= '<tr class="odd"><td colspan="6">Venteliste:</td><tr>';
+	$result3 = db_query('SELECT cid, uid, name, mobile, phone, email, waiting FROM {cobook_attendance} WHERE waiting > 0 AND delta = :delta AND nid = :nid ORDER BY waiting', array(':nid' => $item->nid, ':delta' => $delta));
+	$number = 0;
+	foreach ($result3 as $item3) {
+	  $ed_link = TRUE;
+	  $number += 1;
+	  $name = $item3->name;
+	  $mobile = $item3->mobile;
+	  $phone = $item3->phone;
+	  $email = $item3->email;
+	  if ($item3->uid) {
+	    $ed_link = FALSE;
+	    $result4 = db_query('SELECT uid, name, mail FROM {users} WHERE uid = :uid', array(':uid' => $item3->uid));
+	    foreach ($result4 as $item4) {
+	      $mobile = db_query('SELECT field_mobile_value FROM {field_data_field_mobile} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+	      $phone = db_query('SELECT field_fixed_line_value FROM {field_data_field_fixed_line} WHERE entity_id = :uid', array(':uid' => $item4->uid))->fetchField();
+  	      $name = $item4->name;
+  	      $email = $item4->mail;
+	    }
+	  }
+	  if ($number % 2 == 0) {
+	    $out .= '<tr class="even">';
+	  }
+	  else {
+	    $out .= '<tr class="odd">';
+	  }  
+	  if ($ed_link == TRUE) {
+	    $out .= '<td>' . $number . '</td><td>' . do_link($name) . '</td><td>' . do_link($mobile) . '</td><td>' . do_link($phone) . '</td><td>' . do_link($email) . '</td><td>Frameld</td></tr>';
+	  } else {  
+	    $out .= '<td>' . $number . '</td><td>' . $name . '</td><td>' . $mobile . '</td><td>' . $phone . '</td><td>' . $email . '</td><td>Frameld</td></tr>';
+	  }  
+	}
+
+	$out .= '</tbody></table><p><br></p>';
+      }
+
+      $out .= '</div>';
+    } 
+  } else
+  {
+    $out = t('You are not allowed to access this page');
+  }
+  return $out;
+}  
+  
