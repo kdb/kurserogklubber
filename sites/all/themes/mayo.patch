@@ -1,0 +1,50 @@
+diff --git a/sites/all/themes/mayo/css/style.css b/sites/all/themes/mayo/css/style.css
+index 4bb931b..b8fd78e 100644
+--- a/sites/all/themes/mayo/css/style.css
++++ b/sites/all/themes/mayo/css/style.css
+@@ -419,7 +419,9 @@ fieldset {
+ 
+ div#logo {
+   float: left;
+-  padding: 9px 4px 4px 9px;
++}
++div#logo img {
++  display: block;
+ }
+ 
+ #name-and-slogan {
+@@ -663,6 +665,7 @@ div#logo {
+   padding: 4px 8px;
+   font-size: 1.3em;
+   margin-bottom: 10px;
++  margin-top: 0;
+ }
+ 
+ #content .block h2 {
+diff --git a/sites/all/themes/mayo/sass/style.scss b/sites/all/themes/mayo/sass/style.scss
+index 42f4764..bea6041 100644
+--- a/sites/all/themes/mayo/sass/style.scss
++++ b/sites/all/themes/mayo/sass/style.scss
+@@ -34,7 +34,11 @@
+ }
+ div#logo {
+   float: left;
+-  padding: 9px 4px 4px 9px;
++  // Since the image is duplicated as background we need to remove all spacings
++  // around it. Also to keep same behaviour as last version of MAYO.
++  img {
++    display: block;
++  }
+ }
+ #name-and-slogan {
+   float: left;
+@@ -259,6 +263,9 @@ div#logo {
+   padding: 4px 8px;
+   font-size: 1.3em;
+   margin-bottom: 10px;
++  // margin top is overridden later on. So we need to address this here to keep
++  // behaviour from old version of MAYO.
++  margin-top: 0;
+ }
+ #content .block h2 { /* main content: block title */
+   padding: 4px 8px;
